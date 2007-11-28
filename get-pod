@@ -1,0 +1,459 @@
+#!/usr/bin/python
+
+# First thing is make sure we have feedparser.
+import os, sys, time, pickle, subprocess, feedparser
+
+
+# Print out more crap
+debug = False
+
+# Default values for the options parsing below
+default_type = "title"
+arg_ask = False
+loaded_etag_file = False
+
+def clean_up():
+    try:
+        global all_done_f
+        all_done_f.close()
+    except:
+        pass
+    if loaded_etag_file == True:
+        try:
+            global etags
+            f = open(etag_file, "w")
+            pickle.dump(etags, f)
+            f.close()
+        except:
+            pass
+
+def bye():
+    clean_up()
+    sys.exit(0)
+
+def prn(*args):
+    string = ""
+    for stt in list(args):
+        if type(stt) == str or type(stt) == unicode:
+            string = string + stt.encode('ascii', 'replace')
+        elif type(stt) == list:
+            string = string + str(stt)
+        else:
+            string = string + "{obj is not a str, is %s.}"%(type(stt))
+    print string
+
+def wrn(s):
+    print >> sys.stderr, s.encode('ascii', 'replace')
+
+def err(s, e):
+    wrn(s)
+    clean_up()
+    sys.exit(e)
+
+
+# Load the config file (or try).
+conf = os.path.join( os.path.expanduser("~"), ".get-pod.conf" )
+if not os.access( conf, os.F_OK | os.R_OK ):
+    err("Exiting as config file not found or readable: \"%s\"."%conf, 10)
+f = open(conf,"r")
+exec(f)
+f.close()
+
+
+
+# Sanity
+
+if not os.access(wget, os.F_OK | os.R_OK | os.X_OK):
+    err("Seems that \"%s\" is not a file, not readable, or not executable---exiting."%wget, 11)
+
+if not os.access(putjoysuck, os.F_OK | os.R_OK | os.X_OK):
+    err("Seems that \"%s\" is not a file, not readable, or not executable---exiting."%putjoysuck, 12)
+
+if not os.access(all_done_file, os.F_OK | os.R_OK):
+    err("Seems that \"%s\" is not a file or not readable---exiting."%all_done_file, 13)
+
+while not os.access(etag_file, os.F_OK | os.R_OK):
+    wrn("Seems that \"%s\" is not a file or not readable."%etag_file)
+    input = raw_input("Would you like to create a blank one? [No]: ")
+    if (0 < len(input)) and ("y" == input[0] or "Y" == input[0]):
+        wrn("Creating blank etag/modtime pickle file in \"%s\"."%etag_file)
+        f = open( etag_file, "w" )
+        pickle.dump( [], f )
+        f.close()
+    else:
+        wrn("OK, exiting.")
+        bye()
+
+# Check if outfn is writable.
+try:
+    f = open( outfn, "w" )
+except IOError:
+    err("Seems that \"%s\" is not writable---exiting."%outfn, 9)
+finally:
+    f.close()
+    try:
+        os.remove(outfn)
+    except OSError:
+        pass
+
+
+# Sanity mixed with argument parsing.
+
+if len(sys.argv) != 1:
+    if len(sys.argv) == 2 and sys.argv[1] == "--ask":
+        arg_ask = True
+    else:
+        err("This program shouldn't take any arguments (except maybe ``--ask''):  exiting.", 19)
+
+
+##  This is the function that'll tag a d/l file.
+def get_tag(type, entry, enc):
+    global default_type
+    if type == "title":
+        return entry.title.encode('ascii', 'replace')
+    elif type == "updated":
+        return time.strftime("%a%d%b%Y", entry.updated_parsed)
+    elif type == "date":
+        return time.strftime("%a%d%b%Y", time.localtime())
+    elif type == "ask":
+        input = raw_input("What should the tag-type be? [%s] "%(default_type))
+        if len(input) != 0:
+            default_type = input
+        return get_tag(default_type, entry, enc)
+    else:
+        err("Invalid type value (%s) passed to ``get_tag''."%str(type), 30)
+
+
+
+# etagfile
+f = open(etag_file, "r")
+etags = pickle.load(f)
+f.close()
+loaded_etag_file = True
+
+# This is one url per line
+all_done = []
+f = open(all_done_file, "r")
+for i in f:
+    i = i.rstrip('\n\r\t\v ')
+    all_done.append(i)
+f.close()
+
+# Now all_done is a list of already downloaded files.
+# Now we reopen this in append mode.
+all_done_f = open(all_done_file, "a")
+
+n_shows = 0
+for show in feeds:
+    n_shows = n_shows + 1
+    print "\n----------------------------------------------------------"
+    print "        %i/%i: %s\n"%(n_shows, len(feeds), show[0])
+
+    # OK so we now set everything about how this feed is handled.
+    #   Should we chekc this feed at all
+    #    print feed info.
+    #    Ask about mod.time and already downloaded.
+    #    pay attention to mod. time.
+    #    pay attention to already downloaded.
+    #    print episode info
+    #    ask about each episode?
+    #   d/l episode?
+    #   
+    # Thse are the op~s.
+    op_ask_feed = None
+    op_check_feed = None
+    op_ask_moddate = None
+    op_use_moddate = None
+    op_ask_already_dl = None
+    op_use_already_dl = None
+    op_print_feed = None
+    op_print_ep = None
+    op_ask_ep = None
+    op_get_ep = None
+
+
+    #    print:  Do not download and just print info about the show.
+    #    get:  Get each episode paying attention to mod.time & already d/l~ed.
+    #    select:  Ask about each episode paying attention to mod. time & already d/l~ed.
+    #    ask (could be a prog. arg.):  Ask if this show should be d/l & parsed, ask about mod. time, ask about already d/l~ed, ask print, and ask about d/l (Rec, etc.)
+    #    all:  Ask if each episode should be parsed & d/l~ed and  ignore  mod. time but not already d/l.
+    #  [2] should be the field desc what goes in the 2nd place of put-joysuck.
+    #    title:  The title field of the episode.
+    #    updated:  The date the episode was updated.
+    #    date:  The current date.
+    #    ask:  Ask what field to use.
+
+
+    if show[1] == "print" :
+        op_ask_feed = False
+        op_check_feed = True
+        op_ask_moddate = False
+        op_use_moddate = False
+        op_ask_already_dl = False
+        op_use_already_dl = True
+        op_print_feed = True
+        op_print_ep = False
+        op_ask_ep = False
+        op_get_ep = False
+    elif show[1] == "get" :
+        op_ask_feed = False
+        op_check_feed = True
+        op_ask_moddate = False
+        op_use_moddate = True
+        op_ask_already_dl = False
+        op_use_already_dl = True
+        op_print_feed = False
+        op_print_ep = False
+        op_ask_ep = False
+        op_get_ep = True
+    elif show[1] == "select" :
+        op_ask_feed = False
+        op_check_feed = True
+        op_ask_moddate = False
+        op_use_moddate = True
+        op_ask_already_dl = False
+        op_use_already_dl = True
+        op_print_feed = True
+        op_print_ep = True
+        op_ask_ep = True
+        op_get_ep = False # Doesn't matter.
+    elif show[1] == "ask" :
+        op_ask_feed = True
+        op_check_feed = True # Doesn't matter.
+        op_ask_moddate = True
+        op_use_moddate = False # Doesn't matter.
+        op_ask_already_dl = True
+        op_use_already_dl = True # Doesn't matter.
+        op_print_feed = True
+        op_print_ep = True
+        op_ask_ep = True
+        op_get_ep = False # Doesn't matter.
+    elif show[1] == "all" :
+        op_ask_feed = True
+        op_check_feed = True # Doesn't matter.
+        op_ask_moddate = False
+        op_use_moddate = False
+        op_ask_already_dl = False
+        op_use_already_dl = True
+        op_print_feed = True
+        op_print_ep = True
+        op_ask_ep = True
+        op_get_ep = False # Doesn't matter.
+    else:
+        wrn("Show ``%s'' has an invalid [1] part; skipping.")
+        continue
+    
+
+    if show[2] == "ask" :
+        op_print_ep = True
+        op_ask_ep = True
+
+
+    if ( arg_ask ) :
+        op_ask_feed = True
+        # Then use feed op~s.
+
+
+    # So now we start going through the feed op by op.
+
+
+    # op_ask_feed
+    if op_ask_feed :
+        user_input = raw_input("Should this feed be checked [no] ? ")
+        if len(user_input) <= 0 or (user_input[0] != "y" and user_input[0] != "Y"):
+            print "Ok, not checking it."
+            op_check_feed = False
+        else:
+            print "Checking feed..."
+            op_check_feed = True
+
+
+    # op_check_feed
+    if not op_check_feed :
+        continue
+
+
+    # op_ask_moddate
+    # This needs to be done first, and no matter what else.
+    # These have to be "" b/c that's what's ret from the file.
+    moddate = ""
+    tag = ""
+    n_etags = None
+    for i in range(len(etags)):
+        if etags[i][0] == show[0]:
+            moddate = etags[i][1]
+            tag = etags[i][2]
+            n_etags = i
+            break
+
+    # At this point we have moddate/tag as what is normal, now we see if we should ignore them
+    if op_ask_moddate :
+        user_input = raw_input("Should the etag or modified date be used (they will still be recorded) [no] ? ")
+        if len(user_input) <= 0 or (user_input[0] != "y" and user_input[0] != "Y"):
+            print "Ok, ignoring etgas and modified dates."
+            op_use_moddate = False
+        else:
+            print "Using etgas and modified dates."
+            op_use_moddate = True
+
+
+    # op_use_moddate
+    if not op_use_moddate :
+        moddate = ""
+        tag = ""
+
+
+    # op_ask_already_dl
+    if op_ask_already_dl :
+        user_input = raw_input("Should each episode be checked against the already d/l~ed file (they will still be recorded) [yes] ? ")
+        if len(user_input) <= 0 or (user_input[0] != "y" and user_input[0] != "Y"):
+            print "Using the already d/l~ed file."
+            op_use_already_dl = True
+        else:
+            print "Ok, ignoring the already d/l~ed file."
+            op_use_already_dl = False
+
+
+    # no op, get the feed.
+    # Each feed should be a name, tags, and a url.
+    # Now we need to download, check, and rename.
+    # You cannot supply a null arg to feed parser for etag/moddate.
+    if tag != "" and moddate == "":
+        feed = feedparser.parse(show[3], etag=tag)
+    elif tag == "" and moddate != "":
+        feed = feedparser.parse(show[3], modified=moddate)
+    elif tag == "" and moddate == "":
+        feed = feedparser.parse(show[3])
+    else:
+        feed = feedparser.parse(show[3], etag=tag, modified=moddate)
+    # Bozo basically checks for everything (already downed (etags) no server, 404, or even an ill-formed XML!).
+    if feed.bozo > 0:
+        if "status" in feed:
+            if feed.status == 304:
+                print "Feed %s has not changed (etag=%s, moddate=%s)."%(show[0],str(tag),str(moddate))
+                continue
+            # This is an ignored exception, for _this_ one feed.
+            elif len(show) > 4 and show[4] == str(feed.bozo_exception):
+                pass
+            else:
+                wrn("Feed %s was not parsed as bozo > 0 (status=%i, href=%s, bozo_exception=%s)."%(show[0], feed.status, feed.href, str(feed.bozo_exception)))
+                continue
+        else:
+            wrn("Feed %s was not parsed as bozo > 0 and there was no status (bozo_exception=%s)."%(show[0], str(feed.bozo_exception)))
+            continue
+
+    # Now we have a feed to parse.
+    # check etags.
+    if n_etags != None:
+        if "modified" in feed:
+            etags[n_etags][1] = feed.modified
+        if "etag" in feed:
+            etags[n_etags][2] = feed.etag
+    else:
+        f = [show[0],]
+        i = 0
+        if "modified" in feed:
+            f.append(feed.modified)
+            i = 1
+        else:
+            f.append("")
+        if "etag" in feed:
+            f.append(feed.etag)
+            i = 1
+        else:
+            f.append("")
+        if i == 1:
+            etags.append(f)
+
+
+    n_e_tot = len(feed.entries)
+    n_e_done = 0
+    if op_print_feed :
+        i = feed.feed
+        # We only really print info that _may_ be used to taf this feed.
+        for s in "title", "subtitle", "rights", "generator", "info", "updated", "id", "author", "contributors", "image.title", "publisher:", "tags:", "language:", "license:", "errorreportsto:":
+            if s in i:
+                if len(s) > 15: sz = 1
+                else: sz = 15 - len(s)
+                st = s + ":"
+                while sz > 0:
+                    st = st + " "
+                    sz = sz - 1
+                prn(st, i[s])
+    #This should iterated sorted by the updates_parsed field.
+    # So every now and again a feed just does not have _any_ dates included.
+    # when this happenhs updated_parsed is the only date availrable and, it seems
+    # that we want to get 'em in the reverse order from the feedparser ???
+    # fuck knows why.
+    feed.entries.reverse()
+    for i in sorted(feed.entries,cmp=cmp,key=lambda x:x.updated_parsed):
+        if debug: print "\n\n\n\n"+str(i)
+        for j in i.enclosures:
+            # The default action is set per ep.
+            op_op_get_ep = op_get_ep
+            n_e_done = n_e_done + 1
+            print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
+
+
+            # op_use_already_dl
+            if op_use_already_dl and ( j.href in all_done ):
+                print "Found in all_done_file, would not GET: %s"%(j.href)
+            else:
+                print "GET: %s"%(j.href)
+
+
+                # op_print_ep
+                if op_print_ep :
+                    # Now we print the possible ``tags''.
+                    for s in "title", "summary", "content", "published", "updated", "created", "expired", "id", "author", "contributors", "publisher", "tags", "comments", "licence":
+                        if s in i:
+                            if len(s) > 15: sz = 1
+                            else: sz = 15 - len(s)
+                            st = "        " + s + ":"
+                            while sz > 0:
+                                st = st + " "
+                                sz = sz - 1
+                            prn(st, i[s])
+
+
+                # op_ask_ep
+                if op_ask_ep :
+                    input = raw_input("Do you want to {s}kip, {m}ark as d/l~ed, or {d}/l (and mark)? [skip] ")
+                    if len(input) != 1 or input == "s":
+                        print "\n---------------------------------> Skipping.\n"
+                        op_op_get_ep = False
+                    elif input[0] == "m" or input[0] == "M":
+                        print >> all_done_f, j.href
+                        op_op_get_ep = False
+                    elif input[0] == "d" or input[0] == "D":
+                        op_op_get_ep = True
+                    else:
+                        print "\n---------------------------------> Invalid input \"%s\", skipping.\n"%(input)
+                        op_op_get_ep = False
+
+
+                # op_get_ep  set above!
+                if op_op_get_ep :
+                    # Now we try and get.
+                    # This is first so we can do error checking.
+                    descrip = get_tag(show[2], i, j)
+                    print "Getting..."
+                    if 0 < subprocess.call([wget, "-O", outfn, j.href]):
+                        wrn("Error downloading \"%s\" to \"%s\"."%(j.href,outfn))
+                    else:
+                        if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn]):
+                            wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
+                        else:
+                            print >> all_done_f, j.href
+                            print "Deleting the downloaded file...",
+                            os.remove(outfn)
+                            print "done."
+                else:
+                    print "Would've d/l~ed and run put-joysuck \"%s\" <get_tag(<type>, ...)> \"%s\"."%(show[0],outfn)
+
+if n_shows == 0:
+    err("\n---------------------------------\nIt seems as if nothing was done!", 1)
+else:
+    print "\n---------------------------------\nTotal %i shows where checked, and maybe downloaded."%n_shows
+    bye()
+

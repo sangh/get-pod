@@ -1,0 +1,83 @@
+
+# This is an example conf file, you may want to start by just renaming it
+# to remove the example extention.
+
+
+# This *is* a python script, it is called in the main function as:
+#   f = open("This file name","r")
+#   exec(f)
+#   f.close()
+# Which means you can do some crazy things in here.
+
+
+# Simple list of every URL downloaded (really, it doesn't grow very fast).
+# This includes anything that you have marked but didn't actually download.
+all_done_file = "~/.get-pod-all-done.list"
+
+# File to save the etag (and date) on a per-feed basis, so if this
+# hasn't changed than the rest of the XML does not need to be sent.
+etag_file = "~/.get-pod-etag-modtime.pickle"
+
+# Output filename, will be overwritten and then deleted.
+outfn = "/tmp/get-pod-outfile.mp3"
+
+# Program to call with the "show name" "description of episode" "output file"
+# After this executable does whatever, the output file will be deleted,
+# so it should probably copy it somewhere else.
+putjoysuck = "some executable to do something useful with the downloaded file"
+
+# Location of wget executable
+wget = "/usr/bin/wget"
+
+
+# Feeds contain shows which contain episodes.
+# Layout of the tuple:
+
+# Show parts are:
+#   [0] A *short* (alpha-numeric-underscore) name of the series.
+#       Things like: TOE, Wait_Wait, HH, etc.
+#   [1] How to handle the show (or feed) as a whole; must be one of:
+#       print:  Do not download and just print info about the show.
+#       get:    Get each episode respecting etags, mod. time, and
+#               if already d/l~ed.
+#       select: Ask about each episode respecting etags, mod. time, and if
+#               already d/l~ed.
+#       ask:    Ask if this show should be d/l and parsed, ask about
+#               etags/mod. time, ask about already d/l~ed, ask
+#               about printing show info, and ask about d/l (and marking it).
+#       all:    Ask if each episode should be parsed and d/l~ed while
+#               completely ignoring etags/mod. time, but respecting if it's
+#               already been d/l~ed.
+#   [2] What should go in the description field of the putjoysuck executable:
+#       title:  The title field of the episode.
+#       updated:The date the episode was updated.
+#       date:   The current date.
+#       ask:    Ask which field to use.
+#   [3] The URL of the feed.
+#   [4] *Optional*  This is a particular bozo exception that is allowed for
+#       this show.  This is useful if the parser throws some sort of exception,
+#       but you want to have it try to parse it anyways.  It is given as a
+#       string and the only one I've ever used is:
+#           "documented declared as us-ascii, but parsed as utf-8"
+#
+# That means that each element of the feeds tuple is itself a tuple of exactly
+# 4 or 5 elements, all strings.
+feeds = (
+
+# 4 field example where each episode is asked about and the title
+# of the episode is used in the name:
+("SomeMusic", "select", "title",
+    "http://somedomain.com/somecast/file.php?id=21253"),
+
+# Just get all of these.
+("SomeMusic", "get", "title",
+    "http://someotherdomain.com/somecast.xml"),
+
+# If this feed reports its encoding incorrectly, but seems to work
+# one can ignore that error:
+("CC", "get", "title",
+    "http://audio.mybadsite.com/podcast/podcast.xml",
+    "documented declared as us-ascii, but parsed as utf-8"),
+
+
+) # End of feeds

@@ -1,0 +1,19 @@
+# Ignore any conf files and the all done list
+# and the etag pickle file
+*get-pod*
+# Then unignore the script itself and the example conf
+!get-pod
+!get-pod.conf.example
+
+
+
+# Ignore any feed files if they have been manually downloaded.
+*.xml
+*.asp
+
+# Ignore any media files, I think
+*.mp3
+*.ogg
+*.flac
+*.wmv
+*.asf
