@@ -144,6 +144,7 @@ f.close()
 all_done_f = open(all_done_file, "a")
 
 n_shows = 0
+feed_errors = []
 for show in feeds:
     n_shows = n_shows + 1
     print "\n----------------------------------------------------------"
@@ -336,10 +337,15 @@ for show in feeds:
             elif len(show) > 4 and show[4] == str(feed.bozo_exception):
                 pass
             else:
-                wrn("Feed %s was not parsed as bozo > 0 (status=%i, href=%s, bozo_exception=%s)."%(show[0], feed.status, feed.href, str(feed.bozo_exception)))
+                err_tup = (
+                    show[0], feed.status, feed.href, str(feed.bozo_exception))
+                wrn("Feed %s was not parsed as bozo > 0 (status=%i, href=%s, bozo_exception=%s)." % err_tup )
+                feed_errors.append(err_tup)
                 continue
         else:
-            wrn("Feed %s was not parsed as bozo > 0 and there was no status (bozo_exception=%s)."%(show[0], str(feed.bozo_exception)))
+            err_tup = (show[0], None, None, str(feed.bozo_exception))
+            wrn("Feed %s was not parsed as bozo > 0 and there was no status (bozo_exception=%s)." % (err_tup[0], err_tup[3]))
+            feed_errors.append(err_tup)
             continue
 
     # Now we have a feed to parse.
@@ -451,9 +457,19 @@ for show in feeds:
                 else:
                     print "Would've d/l~ed and run put-joysuck \"%s\" <get_tag(<type>, ...)> \"%s\"."%(show[0],outfn)
 
+print "\n---------------------------------"
+print "Total %i shows where checked, and maybe downloaded." % (n_shows, )
+print "\n---------------------------------"
+
+for s in feed_errors:
+    wrn("Feed %s was not parsed:" % (str(s[0]), ))
+    wrn("Feed status = %s" %(str(s[1]), ))
+    wrn("Feed HREF = %s" %(str(s[2]), ))
+    wrn("Feed bozo = %s" %(str(s[3]), ))
+    wrn("\n---------------------------------")
+
 if n_shows == 0:
-    err("\n---------------------------------\nIt seems as if nothing was done!", 1)
-else:
-    print "\n---------------------------------\nTotal %i shows where checked, and maybe downloaded."%n_shows
-    bye()
+    err("\nIt seems as if nothing was done!", 1)
+# All good.
+bye()
 
