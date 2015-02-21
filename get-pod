@@ -394,68 +394,80 @@ for show in feeds:
     feed.entries.reverse()
     for i in sorted(feed.entries,cmp=cmp,key=lambda x:x.updated_parsed):
         if debug: print "\n\n\n\n"+str(i)
-        for j in i.enclosures:
-            # The default action is set per ep.
-            op_op_get_ep = op_get_ep
-            n_e_done = n_e_done + 1
-            print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
+        try:
+            for j in i.enclosures:
+                # The default action is set per ep.
+                op_op_get_ep = op_get_ep
+                n_e_done = n_e_done + 1
+                print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
 
 
-            # op_use_already_dl
-            if op_use_already_dl and ( j.href in all_done ):
-                print "Found in all_done_file, would not GET: %s"%(j.href)
-            else:
-                print "GET: %s"%(j.href)
-
-
-                # op_print_ep
-                if op_print_ep :
-                    # Now we print the possible ``tags''.
-                    for s in "title", "summary", "content", "published", "updated", "created", "expired", "id", "author", "contributors", "publisher", "tags", "comments", "licence":
-                        if s in i:
-                            if len(s) > 15: sz = 1
-                            else: sz = 15 - len(s)
-                            st = "        " + s + ":"
-                            while sz > 0:
-                                st = st + " "
-                                sz = sz - 1
-                            prn(st, i[s])
-
-
-                # op_ask_ep
-                if op_ask_ep :
-                    input = raw_input("Do you want to {s}kip, {m}ark as d/l~ed, or {d}/l (and mark)? [skip] ")
-                    if len(input) != 1 or input == "s":
-                        print "\n---------------------------------> Skipping.\n"
-                        op_op_get_ep = False
-                    elif input[0] == "m" or input[0] == "M":
-                        print >> all_done_f, j.href
-                        op_op_get_ep = False
-                    elif input[0] == "d" or input[0] == "D":
-                        op_op_get_ep = True
-                    else:
-                        print "\n---------------------------------> Invalid input \"%s\", skipping.\n"%(input)
-                        op_op_get_ep = False
-
-
-                # op_get_ep  set above!
-                if op_op_get_ep :
-                    # Now we try and get.
-                    # This is first so we can do error checking.
-                    descrip = get_tag(show[2], i, j)
-                    print "Getting..."
-                    if 0 < subprocess.call([wget, "-O", outfn, j.href]):
-                        wrn("Error downloading \"%s\" to \"%s\"."%(j.href,outfn))
-                    else:
-                        if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn]):
-                            wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
-                        else:
-                            print >> all_done_f, j.href
-                            print "Deleting the downloaded file...",
-                            os.remove(outfn)
-                            print "done."
+                # op_use_already_dl
+                if op_use_already_dl and ( j.href in all_done ):
+                    print "Found in all_done_file, would not GET: %s"%(j.href)
                 else:
-                    print "Would've d/l~ed and run put-joysuck \"%s\" <get_tag(<type>, ...)> \"%s\"."%(show[0],outfn)
+                    print "GET: %s"%(j.href)
+
+
+                    # op_print_ep
+                    if op_print_ep :
+                        # Now we print the possible ``tags''.
+                        for s in "title", "summary", "content", "published", "updated", "created", "expired", "id", "author", "contributors", "publisher", "tags", "comments", "licence":
+                            if s in i:
+                                if len(s) > 15: sz = 1
+                                else: sz = 15 - len(s)
+                                st = "        " + s + ":"
+                                while sz > 0:
+                                    st = st + " "
+                                    sz = sz - 1
+                                prn(st, i[s])
+
+
+                    # op_ask_ep
+                    if op_ask_ep :
+                        input = raw_input("Do you want to {s}kip, {m}ark as d/l~ed, or {d}/l (and mark)? [skip] ")
+                        if len(input) != 1 or input == "s":
+                            print "\n---------------------------------> Skipping.\n"
+                            op_op_get_ep = False
+                        elif input[0] == "m" or input[0] == "M":
+                            print >> all_done_f, j.href
+                            op_op_get_ep = False
+                        elif input[0] == "d" or input[0] == "D":
+                            op_op_get_ep = True
+                        else:
+                            print "\n---------------------------------> Invalid input \"%s\", skipping.\n"%(input)
+                            op_op_get_ep = False
+
+
+                    # op_get_ep  set above!
+                    if op_op_get_ep :
+                        # Now we try and get.
+                        # This is first so we can do error checking.
+                        descrip = get_tag(show[2], i, j)
+                        print "Getting..."
+                        if 0 < subprocess.call([wget, "-O", outfn, j.href]):
+                            wrn("Error downloading \"%s\" to \"%s\"."%(j.href,outfn))
+                        else:
+                            if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn]):
+                                wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
+                            else:
+                                print >> all_done_f, j.href
+                                print "Deleting the downloaded file...",
+                                os.remove(outfn)
+                                print "done."
+                    else:
+                        print "Would've d/l~ed and run put-joysuck \"%s\" <get_tag(<type>, ...)> \"%s\"."%(show[0],outfn)
+        except AttributeError:
+            # Sometimes feeds are broken, that is items don't have enclosures.
+            print "\nNO ENCLOSURES FOUND:\n"
+            try:
+                print json.dumps(str(i), sort_keys=True,
+                                    indent=2, separators=(',', ': '))
+            except:
+                print str(i)
+            finally:
+                print "\n"
+
 
 print "\n---------------------------------"
 print "Total %i shows where checked, and maybe downloaded." % (n_shows, )
