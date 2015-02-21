@@ -21,7 +21,11 @@ etag_file = "~/.get-pod-etag-modtime.pickle"
 # Output filename, will be overwritten and then deleted.
 outfn = "/tmp/get-pod-outfile.mp3"
 
-# Program to call with the "show name" "description of episode" "output file"
+# Program to call with arguments:
+#   1)  Show Name
+#   2)  Description of Episode
+#   3)  The file name
+#   4)  An _optional_ date string in the format: "Sat01Feb15-1402".
 # After this executable does whatever, the output file will be deleted,
 # so it should probably copy it somewhere else.
 putjoysuck = "some executable to do something useful with the downloaded file"

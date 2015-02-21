@@ -395,6 +395,10 @@ for show in feeds:
     for i in sorted(feed.entries,cmp=cmp,key=lambda x:x.updated_parsed):
         if debug: print "\n\n\n\n"+str(i)
         try:
+            pub_dt = time.strftime("%a%d%b%y-%H%M", i.published_parsed)
+        except:
+            pub_dt = time.strftime("%a%d%b%y-%H%M", time.localtime())
+        try:
             for j in i.enclosures:
                 # The default action is set per ep.
                 op_op_get_ep = op_get_ep
@@ -448,7 +452,7 @@ for show in feeds:
                         if 0 < subprocess.call([wget, "-O", outfn, j.href]):
                             wrn("Error downloading \"%s\" to \"%s\"."%(j.href,outfn))
                         else:
-                            if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn]):
+                            if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn, pub_dt]):
                                 wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
                             else:
                                 print >> all_done_f, j.href
