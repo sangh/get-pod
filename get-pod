@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 # First thing is make sure we have feedparser.
-import os, sys, time, pickle, subprocess, feedparser
+import os, sys, time, pickle, pprint, subprocess, feedparser
 
 
 # Print out more crap
@@ -465,8 +465,7 @@ for show in feeds:
             # Sometimes feeds are broken, that is items don't have enclosures.
             print "\nNO ENCLOSURES FOUND:\n"
             try:
-                print json.dumps(str(i), sort_keys=True,
-                                    indent=2, separators=(',', ': '))
+                print pprint.PrettyPrinter().pformat(i)
             except:
                 print str(i)
             finally:
