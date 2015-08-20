@@ -243,7 +243,7 @@ for show in feeds:
     else:
         wrn("Show ``%s'' has an invalid [1] part; skipping.")
         continue
-    
+
 
     if show[2] == "ask" :
         op_print_ep = True
@@ -392,6 +392,7 @@ for show in feeds:
     # that we want to get 'em in the reverse order from the feedparser ???
     # fuck knows why.
     feed.entries.reverse()
+    all_done_count = 0
     for i in sorted(feed.entries,cmp=cmp,key=lambda x:x.updated_parsed):
         if debug: print "\n\n\n\n"+str(i)
         try:
@@ -403,13 +404,19 @@ for show in feeds:
                 # The default action is set per ep.
                 op_op_get_ep = op_get_ep
                 n_e_done = n_e_done + 1
-                print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
 
 
                 # op_use_already_dl
                 if op_use_already_dl and ( j.href in all_done ):
-                    print "Found in all_done_file, would not GET: %s"%(j.href)
+                    all_done_count = all_done_count + 1
+                    if debug:
+                        print "Found in all_done_file, would not GET: %s"%(j.href)
                 else:
+                    print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
+                    if 0 < all_done_count:
+                        print "Found %i enclosures in all_done_file."%(all_done_count)
+                        all_done_count = 0
+                        print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
                     print "GET: %s"%(j.href)
 
 
@@ -471,6 +478,10 @@ for show in feeds:
             finally:
                 print "\n"
 
+    if 0 < all_done_count:
+        print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
+        print "Found %i enclosures in all_done_file."%(all_done_count)
+        all_done_count = 0
 
 print "\n---------------------------------"
 print "Total %i shows where checked, and maybe downloaded." % (n_shows, )
