@@ -400,6 +400,12 @@ for show in feeds:
         except:
             pub_dt = time.strftime("%a%d%b%y-%H%M", time.localtime())
         try:
+            try:
+                entry_guid = i.id
+                if len(entry_guid) < 15:
+                    entry_guid = None
+            except:
+                entry_guid = None
             for j in i.enclosures:
                 # The default action is set per ep.
                 op_op_get_ep = op_get_ep
@@ -407,7 +413,7 @@ for show in feeds:
 
 
                 # op_use_already_dl
-                if op_use_already_dl and ( j.href in all_done ):
+                if op_use_already_dl and ( j.href in all_done or entry_guid in all_done ):
                     all_done_count = all_done_count + 1
                     if debug:
                         print "Found in all_done_file, would not GET: %s"%(j.href)
@@ -442,6 +448,8 @@ for show in feeds:
                             op_op_get_ep = False
                         elif input[0] == "m" or input[0] == "M":
                             print >> all_done_f, j.href
+                            if entry_guid:
+                                print >> all_done_f, entry_guid
                             op_op_get_ep = False
                         elif input[0] == "d" or input[0] == "D":
                             op_op_get_ep = True
@@ -463,6 +471,8 @@ for show in feeds:
                                 wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
                             else:
                                 print >> all_done_f, j.href
+                                if entry_guid:
+                                    print >> all_done_f, entry_guid
                                 print "Deleting the downloaded file...",
                                 os.remove(outfn)
                                 print "done."
