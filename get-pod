@@ -32,10 +32,10 @@ def bye():
     sys.exit(0)
 
 def prn(*args):
-    string = ""
+    string = u""
     for stt in list(args):
         if type(stt) == str or type(stt) == unicode:
-            string = string + stt.encode('ascii', 'replace')
+            string = string + unicode(stt)
         elif type(stt) == list:
             string = string + str(stt)
         else:
@@ -43,7 +43,7 @@ def prn(*args):
     print string
 
 def wrn(s):
-    print >> sys.stderr, s.encode('ascii', 'replace')
+    print >> sys.stderr, s.decode('UTF-8', 'replace')
 
 def err(s, e):
     wrn(s)
@@ -110,7 +110,7 @@ if len(sys.argv) != 1:
 def get_tag(type, entry, enc):
     global default_type
     if type == "title":
-        return entry.title.encode('ascii', 'replace')
+        return entry.title.decode('UTF-8', 'replace')
     elif type == "updated":
         return time.strftime("%a%d%b%Y", entry.updated_parsed)
     elif type == "date":
