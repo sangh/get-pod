@@ -133,12 +133,30 @@ etags = pickle.load(f)
 f.close()
 loaded_etag_file = True
 
-# This is one url per line
+# This is one url per line, use same strip.
+def add_to_all_done(href, guid):
+    """This is called both while the all done file is opened the first time,
+    so it needs to be only added to the array, and then afterwards to the file
+    as well as the array.  Also guid might be None."""
+    global all_done
+    global all_done_f
+    if not href:
+        err("No href given to add to all done file.", 31)
+    href = href.rstrip('\n\r\t\v ')
+    if all_done_f:
+        print >> all_done_f, href
+    all_done.append(href)
+    if guid:
+        guid = guid.rstrip('\n\r\t\v ')
+        if all_done_f:
+            print >> all_done_f, guid
+        all_done.append(guid)
+
 all_done = []
+all_done_f = None  # Has to be false here to not modify the file while open.
 f = open(all_done_file, "r")
 for i in f:
-    i = i.rstrip('\n\r\t\v ')
-    all_done.append(i)
+    add_to_all_done(i, None)
 f.close()
 
 # Now all_done is a list of already downloaded files.
@@ -452,9 +470,7 @@ for show in feeds:
                             print "\n---------------------------------> Skipping.\n"
                             op_op_get_ep = False
                         elif input[0] == "m" or input[0] == "M":
-                            print >> all_done_f, j.href
-                            if entry_guid:
-                                print >> all_done_f, entry_guid
+                            add_to_all_done(j.href, entry_guid)
                             op_op_get_ep = False
                         elif input[0] == "d" or input[0] == "D":
                             op_op_get_ep = True
@@ -475,9 +491,7 @@ for show in feeds:
                             if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn, pub_dt]):
                                 wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
                             else:
-                                print >> all_done_f, j.href
-                                if entry_guid:
-                                    print >> all_done_f, entry_guid
+                                add_to_all_done(j.href, entry_guid)
                                 print "Deleting the downloaded file...",
                                 os.remove(outfn)
                                 print "done."
