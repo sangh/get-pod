@@ -43,7 +43,9 @@ def prn(*args):
     print string
 
 def wrn(s):
-    print >> sys.stderr, s.decode('UTF-8', 'replace')
+    if not isinstance(s, unicode):
+        s = s.decode('UTF-8', 'replace')
+    print >> sys.stderr, s
 
 def err(s, e):
     wrn(s)
@@ -338,7 +340,11 @@ for show in feeds:
                 pass
             else:
                 err_tup = (
-                    show[0], feed.status, feed.href, str(feed.bozo_exception))
+                    show[0].decode('unicode_escape'),
+                    feed.status,
+                    feed.href.decode('unicode_escape'),
+                    unicode(feed.bozo_exception),
+                )
                 wrn("Feed %s was not parsed as bozo > 0 (status=%i, href=%s, bozo_exception=%s)." % err_tup )
                 feed_errors.append(err_tup)
                 continue
@@ -411,6 +417,8 @@ for show in feeds:
                 op_op_get_ep = op_get_ep
                 n_e_done = n_e_done + 1
 
+                print(j.href)
+                print(entry_guid)
 
                 # op_use_already_dl
                 if op_use_already_dl and ( j.href in all_done or entry_guid in all_done ):
