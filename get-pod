@@ -417,9 +417,6 @@ for show in feeds:
                 op_op_get_ep = op_get_ep
                 n_e_done = n_e_done + 1
 
-                print(j.href)
-                print(entry_guid)
-
                 # op_use_already_dl
                 if op_use_already_dl and ( j.href in all_done or entry_guid in all_done ):
                     all_done_count = all_done_count + 1
