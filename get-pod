@@ -110,7 +110,7 @@ if len(sys.argv) != 1:
 def get_tag(type, entry, enc):
     global default_type
     if type == "title":
-        return entry.title.decode('UTF-8', 'replace')
+        return entry.title.encode('UTF-8', 'replace')
     elif type == "updated":
         return time.strftime("%a%d%b%Y", entry.updated_parsed)
     elif type == "date":
