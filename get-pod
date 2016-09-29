@@ -517,10 +517,10 @@ print "Total %i shows where checked, and maybe downloaded." % (n_shows, )
 print "\n---------------------------------"
 
 for s in feed_errors:
-    wrn("Feed %s was not parsed:" % (str(s[0]), ))
-    wrn("Feed status = %s" %(str(s[1]), ))
-    wrn("Feed HREF = %s" %(str(s[2]), ))
-    wrn("Feed bozo = %s" %(str(s[3]), ))
+    wrn("Feed %s was not parsed:" % (unicode(s[0]), ))
+    wrn("Feed status = %s" %(unicode(s[1]), ))
+    wrn("Feed HREF = %s" %(unicode(s[2]), ))
+    wrn("Feed bozo = %s" %(unicode(s[3]), ))
     wrn("\n---------------------------------")
 
 if n_shows == 0:
