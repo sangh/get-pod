@@ -40,7 +40,7 @@ def prn(*args):
             string = string + str(stt)
         else:
             string = string + "{obj is not a str, is %s.}"%(type(stt))
-    print string
+    print string.encode("UTF-8")
 
 def wrn(s):
     if not isinstance(s, unicode):
