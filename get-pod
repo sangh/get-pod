@@ -523,7 +523,6 @@ def shuttle_fetch_out_to_download_in():
             # Also, there could be multiple enclosures (links so we need to
             # loop through them all (if guid matches skip all of them).
             for enc in entry.enclosures:
-                print(str(enc.href))
                 if enc.href in feeds[sn]["downloaded_links"] or \
                         (guid and guid in feeds[sn]["downloaded_links"]):
                     feeds[sn]["new_downloaded_links"].add(enc.href)
