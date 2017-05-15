@@ -2,88 +2,109 @@
 # coding=UTF-8
 
 # This is an example conf file, you may want to start by just renaming it
-# to remove the example extention.
+# to remove the example extension and then changing the required values.
 
+# You can pass a file name to `get-pod` if you don't want to keep this
+# file in the standard place `~/.get-pod.conf` (or symlink to it from there).
+
+# You can pass an `-a` or `--ask` to `get-pod` to override both the
+# mode and tag_field settings below (in feeds) for just that run.  The thing
+# in brackets when asked a question is the defualt.
 
 # This *is* a python script, it is called in the main function as:
-#   f = open("This file name","r")
-#   exec(f)
-#   f.close()
+#   with open("This is the file name", "r") as f:
+#       exec(f.read())
 # Which means you can do some crazy things in here.
 
 
-# Simple list of every URL downloaded (really, it doesn't grow very fast).
-# This includes anything that you have marked but didn't actually download.
-all_done_file = "~/.get-pod-all-done.list"
+# This directory stores the per-show information including the etags, the
+# modified time, and what links/enclosures have already been downloaed.  Each
+# file is named the same as show[0], the short name, so there cannot be any
+# duplicates or extras.  (But shows can be ignored.)  Also this means that
+# the given short name has to be exactly representable on the given file
+# system without munging (if that happens just change it to something that
+# won't be munged, see the comment called *Unicode Filenames* in the scrpt).
+status_dir = "/home/user/.get-pod-status"
 
-# File to save the etag (and date) on a per-feed basis, so if this
-# hasn't changed than the rest of the XML does not need to be sent.
-etag_file = "~/.get-pod-etag-modtime.pickle"
+# This dir must be empty on startup and if it isn't empty when the script
+# exits a warning will be printed.
+work_dir = "/tmp/get-pod-work"
 
-# Output filename, will be overwritten and then deleted.
-outfn = "/tmp/get-pod-outfile.mp3"
+# The maximum number of simultanious network connections allowed.
+max_connections = 3
 
 # Program to call with arguments:
 #   1)  Show Name
 #   2)  Description of Episode
 #   3)  The file name
-#   4)  An _optional_ date string in the format: "Sat01Feb15-1402".
+#   4)  An date/time string in the format: "Sat01Feb15-1402".
 # After this executable does whatever, the output file will be deleted,
 # so it should probably copy it somewhere else.
+# If it returns non-zero or prints out any output (to either stdout or
+# stderr) at all it will be reported as an error.
 putjoysuck = "some executable to do something useful with the downloaded file"
 
-# Location of wget executable
-wget = "/usr/bin/wget"
 
 
 # Feeds contain shows which contain episodes.
 # Layout of the tuple:
 
 # Show parts are:
-#   [0] A *short* (alpha-numeric-underscore) name of the series.
-#       Things like: TOE, Wait_Wait, HH, etc.
-#   [1] How to handle the show (or feed) as a whole; must be one of:
-#       print:  Do not download and just print info about the show.
-#       get:    Get each episode respecting etags, mod. time, and
-#               if already d/l~ed.
-#       select: Ask about each episode respecting etags, mod. time, and if
-#               already d/l~ed.
-#       ask:    Ask if this show should be d/l and parsed, ask about
-#               etags/mod. time, ask about already d/l~ed, ask
-#               about printing show info, and ask about d/l (and marking it).
-#       all:    Ask if each episode should be parsed and d/l~ed while
-#               completely ignoring etags/mod. time, but respecting if it's
-#               already been d/l~ed.
-#   [2] What should go in the description field of the putjoysuck executable:
-#       title:  The title field of the episode.
-#       updated:The date the episode was updated.
-#       date:   The current date.
-#       ask:    Ask which field to use.
+#   [0] Short-name: a short (alpha-numeric-underscore) name of the series.
+#       Things like: TOE, Wait_Wait, HH, etc.  This is used a hash key (so
+#       they must all be uniqe) and a file is created with this name to hold
+#       status information so this name must not be munged by the file system.
+#   [1] Mode: how to handle the show (or feed) as a whole; must be one of:
+#       get:    Get each episode respecting etags, modified time, and if
+#               each link has already been downloaded.
+#       select: Ask about each episode respecting etags, modified time, and
+#               if each link has already been downloaded.
+#       ask:    Ask if this show should be downloaded and parsed, if so print
+#               information about the show, then ask about etags/mod. time,
+#               ask about respecting already downloaded, ask if each link
+#               should be downloaded (and marked).
+#       all:    Ask if each episode should be downloaded while completely
+#               ignoring etags, modified time, BUT respecting if each link
+#               has already been downloaded.
+#       ignore: Skip downloading this show comepletely.  This cannot update
+#               etags or modified time, obviously.
+#   [2] What should go in the description field of the putjoysuck executable,
+#       values can be seen by changing the mode to "ask":
+#           title:      The title field of the episode.
+#           published:  The date the episode was published or updated.
+#           date:       The date the episode was downloaded.
+#           ask:        Ask for free-form user input and use that.
 #   [3] The URL of the feed.
 #   [4] *Optional*  This is a particular bozo exception that is allowed for
 #       this show.  This is useful if the parser throws some sort of exception,
 #       but you want to have it try to parse it anyways.  It is given as a
-#       string and the only one I've ever used is:
-#           "documented declared as us-ascii, but parsed as utf-8"
-#
-# That means that each element of the feeds tuple is itself a tuple of exactly
-# 4 or 5 elements, all strings.
+#       function (either a real one or lambda one) that returns either True
+#       (yes ignore) or False (stop processing this feed).  The default one
+#       (if you don't specify this) is:
+#           lambda x: False
+#       which stops on every exception.  Some examples:
+def bozo_encoding(ex):
+    return ex == "document declared as us-ascii, but parsed as utf-8"
+def bozo_no_content(ex):
+    return ex == "no Content-type specified"
+
+# Each elecment of the tuple `feeds` must itself be a tuple of exactly 4 or 5
+# elements; the first 4 being strings (type str, NOT bytes) and the last
+# being a function.
 feeds = (
 
-# 4 field example where each episode is asked about and the title
-# of the episode is used in the name:
+# Ask to download each episode.
 ("SomeMusic", "select", "title",
     "http://somedomain.com/somecast/file.php?id=21253"),
 
 # Just get all of these.
-("SomeMusic", "get", "title",
+("SomethingElse", "get", "title",
     "http://someotherdomain.com/somecast.xml"),
 
-# If this feed reports its encoding incorrectly, but seems to work
-# one can ignore that error:
+# The encoding is reported incorrectly, seems to work, ignore the error.
 ("CC", "get", "title",
     "http://audio.mybadsite.com/podcast/podcast.xml",
-    "documented declared as us-ascii, but parsed as utf-8"),
+    bozo_encoding),
 
 
 ) # End of feeds

@@ -1,530 +1,695 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
-# First thing is make sure we have feedparser.
-import os, sys, time, pickle, pprint, subprocess, feedparser
+"""
+Usage: get-pod
+
+See the example conf file for a description of how to use this script.
+This script reads the conf file and downloads podcasts.  It can ask which
+ones to get or do so automatically.
+
+If "-a" or "--ask" is given each show is treated as if the "ask" mode
+was specified and the tag to use was specified as "ask" (which asks for the
+field to use).
+
+The default conf file is "~/.get-pod.conf", to use another file pass
+an "--" argument followed by the file name to use or just the file name if
+that file name doesn't start with the "-" character.
+
+This program uses threads and assumes that this script has *exclusive*
+access to both the conf file (for reading) and the status and work directories
+specified in it for both reading and writing.  Each thread only touches a
+single file so shouldn't need coordination among themselves.
+"""
+
+import urllib.request
+import os, sys, time, json, queue, tempfile, threading, subprocess
+import feedparser
 
 
-# Print out more crap
-debug = False
+def wrn(msg):
+    print(msg, file=sys.stderr)
 
-# Default values for the options parsing below
-default_type = "title"
+def bye(msg):
+    wrn(msg)
+    sys.exit(1)
+
+
 arg_ask = False
-loaded_etag_file = False
-
-def clean_up():
-    try:
-        global all_done_f
-        all_done_f.close()
-    except:
-        pass
-    if loaded_etag_file == True:
-        try:
-            global etags
-            f = open(etag_file, "w")
-            pickle.dump(etags, f)
-            f.close()
-        except:
-            pass
-
-def bye():
-    clean_up()
-    sys.exit(0)
-
-def prn(*args):
-    string = u""
-    for stt in list(args):
-        if type(stt) == str or type(stt) == unicode:
-            string = string + unicode(stt)
-        elif type(stt) == list:
-            string = string + str(stt)
-        else:
-            string = string + "{obj is not a str, is %s.}"%(type(stt))
-    print string.encode("UTF-8")
-
-def wrn(s):
-    if not isinstance(s, unicode):
-        s = s.decode('UTF-8', 'replace')
-    print >> sys.stderr, s
-
-def err(s, e):
-    wrn(s)
-    clean_up()
-    sys.exit(e)
-
-
-# Load the config file (or try).
-conf = os.path.join( os.path.expanduser("~"), ".get-pod.conf" )
-if not os.access( conf, os.F_OK | os.R_OK ):
-    err("Exiting as config file not found or readable: \"%s\"."%conf, 10)
-f = open(conf,"r")
-exec(f)
-f.close()
-
-
-
-# Sanity
-
-if not os.access(wget, os.F_OK | os.R_OK | os.X_OK):
-    err("Seems that \"%s\" is not a file, not readable, or not executable---exiting."%wget, 11)
-
-if not os.access(putjoysuck, os.F_OK | os.R_OK | os.X_OK):
-    err("Seems that \"%s\" is not a file, not readable, or not executable---exiting."%putjoysuck, 12)
-
-if not os.access(all_done_file, os.F_OK | os.R_OK):
-    err("Seems that \"%s\" is not a file or not readable---exiting."%all_done_file, 13)
-
-while not os.access(etag_file, os.F_OK | os.R_OK):
-    wrn("Seems that \"%s\" is not a file or not readable."%etag_file)
-    input = raw_input("Would you like to create a blank one? [No]: ")
-    if (0 < len(input)) and ("y" == input[0] or "Y" == input[0]):
-        wrn("Creating blank etag/modtime pickle file in \"%s\"."%etag_file)
-        f = open( etag_file, "w" )
-        pickle.dump( [], f )
-        f.close()
-    else:
-        wrn("OK, exiting.")
-        bye()
-
-# Check if outfn is writable.
-try:
-    f = open( outfn, "w" )
-except IOError:
-    err("Seems that \"%s\" is not writable---exiting."%outfn, 9)
-finally:
-    f.close()
-    try:
-        os.remove(outfn)
-    except OSError:
-        pass
-
-
-# Sanity mixed with argument parsing.
-
-if len(sys.argv) != 1:
-    if len(sys.argv) == 2 and sys.argv[1] == "--ask":
+def args_set(a):
+    global arg_ask
+    if a in ("-a", "--ask"):
         arg_ask = True
     else:
-        err("This program shouldn't take any arguments (except maybe ``--ask''):  exiting.", 19)
+        bye("Unknown argument: %s" % arg)
 
-
-##  This is the function that'll tag a d/l file.
-def get_tag(type, entry, enc):
-    global default_type
-    if type == "title":
-        return entry.title.encode('UTF-8', 'replace')
-    elif type == "updated":
-        return time.strftime("%a%d%b%Y", entry.updated_parsed)
-    elif type == "date":
-        return time.strftime("%a%d%b%Y", time.localtime())
-    elif type == "ask":
-        input = raw_input("What should the tag-type be? [%s] "%(default_type))
-        if len(input) != 0:
-            default_type = input
-        return get_tag(default_type, entry, enc)
+conf_filename = None
+seen_flag_stop = False
+for arg in sys.argv[1:]:
+    if seen_flag_stop:
+        if conf_filename:
+            bye("Second conf file name given: %s" % fn)
+        conf_filename = arg
+    elif arg == "--":
+        seen_flag_stop = True
+    elif arg[0] == "-":
+        args_set(arg)
     else:
-        err("Invalid type value (%s) passed to ``get_tag''."%str(type), 30)
+        if conf_filename:
+            bye("Second conf file name given: %s" % fn)
+        conf_filename = arg
 
+if not conf_filename:
+    conf_filename = os.path.join(os.path.expanduser("~"), ".get-pod.conf")
 
+try:
+    with open(conf_filename, "r") as f:
+        exec(f.read())
+except:
+    bye("Cannot access conf file: %s" % conf_filename)
 
-# etagfile
-f = open(etag_file, "r")
-etags = pickle.load(f)
-f.close()
-loaded_etag_file = True
+# Won't print anything, but will error if not defined or castable to an int.
+int(max_connections)
 
-# This is one url per line, use same strip.
-def add_to_all_done(href, guid):
-    """This is called both while the all done file is opened the first time,
-    so it needs to be only added to the array, and then afterwards to the file
-    as well as the array.  Also guid might be None."""
-    global all_done
-    global all_done_f
-    if not href:
-        err("No href given to add to all done file.", 31)
-    href = href.rstrip('\n\r\t\v ')
-    if all_done_f:
-        print >> all_done_f, href
-    all_done.append(href)
-    if guid:
-        guid = guid.rstrip('\n\r\t\v ')
-        if all_done_f:
-            print >> all_done_f, guid
-        all_done.append(guid)
+# These need to be str, see the comment called *Unicode Filenames* below.
+for d in (status_dir, work_dir, putjoysuck):
+    if not isinstance(d, str):
+        bye("Must of of type str (see script comments): %s" % str(d))
 
-all_done = []
-all_done_f = None  # Has to be false here to not modify the file while open.
-f = open(all_done_file, "r")
-for i in f:
-    add_to_all_done(i, None)
-f.close()
+if not os.path.isdir(status_dir) or \
+        not os.access(status_dir, os.F_OK | os.R_OK | os.X_OK | os.W_OK):
+    bye("The status directory will not be created automatically, so if this\n"
+        "is your first time running this program you may want to run:\n"
+        "    mkdir '%s'\nand try again.\n"
+        "Cannot access status directory: %s" % (status_dirm, status_dir))
 
-# Now all_done is a list of already downloaded files.
-# Now we reopen this in append mode.
-all_done_f = open(all_done_file, "a")
+if not os.path.exists(work_dir):
+    wrn("Creating work directory: %s" % work_dir)
+    os.mkdir(work_dir)
+if not os.path.isdir(work_dir) or \
+        not os.access(work_dir, os.F_OK | os.R_OK | os.X_OK | os.W_OK):
+    bye("Cannot access work directory: %s" % work_dir)
+if not len(os.listdir(work_dir)) == 0:
+    bye("Work dir is not empty: %s" % work_dir)
 
-n_shows = 0
-feed_errors = []
-for show in feeds:
-    n_shows = n_shows + 1
-    print "\n----------------------------------------------------------"
-    print "        %i/%i: %s\n"%(n_shows, len(feeds), show[0])
+if not os.access(putjoysuck, os.F_OK | os.R_OK | os.X_OK):
+    bye("Seems that \"%s\" isn't a file/readable/executable." % putjoysuck)
 
-    # OK so we now set everything about how this feed is handled.
-    #   Should we chekc this feed at all
-    #    print feed info.
-    #    Ask about mod.time and already downloaded.
-    #    pay attention to mod. time.
-    #    pay attention to already downloaded.
-    #    print episode info
-    #    ask about each episode?
-    #   d/l episode?
-    #   
-    # Thse are the op~s.
-    op_ask_feed = None
-    op_check_feed = None
-    op_ask_moddate = None
-    op_use_moddate = None
-    op_ask_already_dl = None
-    op_use_already_dl = None
-    op_print_feed = None
-    op_print_ep = None
-    op_ask_ep = None
-    op_get_ep = None
+# The conf file is a tuple of tuples, we go through it, transforming it to a
+# dict with the short name being the key checking for duplicates, setting the
+# ignore bozo function if not set, and changing the mode and tag_field to
+# ask if the ask argument was passed.  Error if anything is amiss.
+feeds_conf = feeds
+feeds = {}
+for f in feeds_conf:
+    if not len(f) in (4, 5):
+        bye("Feed spec is wrong length: %s" % str(f))
 
+    # All these need to be str, not bytes because short-name is used as
+    # a file name (see the comment called *Unicode Filenames* below), and the
+    # others are going to be JSON serialized, so seralizing and then
+    # deserialized and compared with the str taken from the etag or modified
+    # HTTP headers, which will never work with bytes.
+    if not isinstance(f[0], str):
+        bye("Short-names must be of type str: %s" % str(f[0]))
+    if not isinstance(f[1], str):
+        bye("Mode must be of type str: %s" % str(f[1]))
+    if not isinstance(f[2], str):
+        bye("Tag-field must be of type str: %s" % str(f[2]))
+    if not isinstance(f[3], str):
+        bye("URL must be of type str: %s" % str(f[3]))
 
-    #    print:  Do not download and just print info about the show.
-    #    get:  Get each episode paying attention to mod.time & already d/l~ed.
-    #    select:  Ask about each episode paying attention to mod. time & already d/l~ed.
-    #    ask (could be a prog. arg.):  Ask if this show should be d/l & parsed, ask about mod. time, ask about already d/l~ed, ask print, and ask about d/l (Rec, etc.)
-    #    all:  Ask if each episode should be parsed & d/l~ed and  ignore  mod. time but not already d/l.
-    #  [2] should be the field desc what goes in the 2nd place of put-joysuck.
-    #    title:  The title field of the episode.
-    #    updated:  The date the episode was updated.
-    #    date:  The current date.
-    #    ask:  Ask what field to use.
+    sn = f[0]
+    if sn in feeds:
+        bye("Duplicate short-name in feeds: %s" % sn)
 
+    feeds[sn] = {}
 
-    if show[1] == "print" :
-        op_ask_feed = False
-        op_check_feed = True
-        op_ask_moddate = False
-        op_use_moddate = False
-        op_ask_already_dl = False
-        op_use_already_dl = True
-        op_print_feed = True
-        op_print_ep = False
-        op_ask_ep = False
-        op_get_ep = False
-    elif show[1] == "get" :
-        op_ask_feed = False
-        op_check_feed = True
-        op_ask_moddate = False
-        op_use_moddate = True
-        op_ask_already_dl = False
-        op_use_already_dl = True
-        op_print_feed = False
-        op_print_ep = False
-        op_ask_ep = False
-        op_get_ep = True
-    elif show[1] == "select" :
-        op_ask_feed = False
-        op_check_feed = True
-        op_ask_moddate = False
-        op_use_moddate = True
-        op_ask_already_dl = False
-        op_use_already_dl = True
-        op_print_feed = True
-        op_print_ep = True
-        op_ask_ep = True
-        op_get_ep = False # Doesn't matter.
-    elif show[1] == "ask" :
-        op_ask_feed = True
-        op_check_feed = True # Doesn't matter.
-        op_ask_moddate = True
-        op_use_moddate = False # Doesn't matter.
-        op_ask_already_dl = True
-        op_use_already_dl = True # Doesn't matter.
-        op_print_feed = True
-        op_print_ep = True
-        op_ask_ep = True
-        op_get_ep = False # Doesn't matter.
-    elif show[1] == "all" :
-        op_ask_feed = True
-        op_check_feed = True # Doesn't matter.
-        op_ask_moddate = False
-        op_use_moddate = False
-        op_ask_already_dl = False
-        op_use_already_dl = True
-        op_print_feed = True
-        op_print_ep = True
-        op_ask_ep = True
-        op_get_ep = False # Doesn't matter.
+    if arg_ask:
+        feeds[sn]["mode"] = "ask"
+        feeds[sn]["tag_field"] = "ask"
     else:
-        wrn("Show ``%s'' has an invalid [1] part; skipping.")
-        continue
+        if not f[1] in ("get", "select", "all", "ask", "ignore"):
+            bye("Unknown mode for %s: %s." % (sn, f[1]))
+        feeds[sn]["mode"] = f[1]
+        feeds[sn]["tag_field"] = f[2]
 
+    feeds[sn]["url"] = f[3]
 
-    if show[2] == "ask" :
-        op_print_ep = True
-        op_ask_ep = True
+    try:
+        feeds[sn]["ignore_bozo_function"] = f[4]
+    except:
+        feeds[sn]["ignore_bozo_function"] = lambda bozo_exp_str: False
 
+    if not callable(feeds[sn]["ignore_bozo_function"]):
+        bye("Not callable: %s" % str(feeds[sn]["ignore_bozo_function"]))
 
-    if ( arg_ask ) :
-        op_ask_feed = True
-        # Then use feed op~s.
+    feeds[sn]["etag"] = None
+    feeds[sn]["modified"] = None
+    feeds[sn]["downloaded_links"] = []
+    feeds[sn]["new_downloaded_links"] = set()
 
-
-    # So now we start going through the feed op by op.
-
-
-    # op_ask_feed
-    if op_ask_feed :
-        user_input = raw_input("Should this feed be checked [no] ? ")
-        if len(user_input) <= 0 or (user_input[0] != "y" and user_input[0] != "Y"):
-            print "Ok, not checking it."
-            op_check_feed = False
-        else:
-            print "Checking feed..."
-            op_check_feed = True
-
-
-    # op_check_feed
-    if not op_check_feed :
-        continue
-
-
-    # op_ask_moddate
-    # This needs to be done first, and no matter what else.
-    # These have to be "" b/c that's what's ret from the file.
-    moddate = ""
-    tag = ""
-    n_etags = None
-    for i in range(len(etags)):
-        if etags[i][0] == show[0]:
-            moddate = etags[i][1]
-            tag = etags[i][2]
-            n_etags = i
-            break
-
-    # At this point we have moddate/tag as what is normal, now we see if we should ignore them
-    if op_ask_moddate :
-        user_input = raw_input("Should the etag or modified date be used (they will still be recorded) [no] ? ")
-        if len(user_input) <= 0 or (user_input[0] != "y" and user_input[0] != "Y"):
-            print "Ok, ignoring etgas and modified dates."
-            op_use_moddate = False
-        else:
-            print "Using etgas and modified dates."
-            op_use_moddate = True
-
-
-    # op_use_moddate
-    if not op_use_moddate :
-        moddate = ""
-        tag = ""
-
-
-    # op_ask_already_dl
-    if op_ask_already_dl :
-        user_input = raw_input("Should each episode be checked against the already d/l~ed file (they will still be recorded) [yes] ? ")
-        if len(user_input) <= 0 or (user_input[0] != "y" and user_input[0] != "Y"):
-            print "Using the already d/l~ed file."
-            op_use_already_dl = True
-        else:
-            print "Ok, ignoring the already d/l~ed file."
-            op_use_already_dl = False
-
-
-    # no op, get the feed.
-    # Each feed should be a name, tags, and a url.
-    # Now we need to download, check, and rename.
-    # You cannot supply a null arg to feed parser for etag/moddate.
-    if tag != "" and moddate == "":
-        feed = feedparser.parse(show[3], etag=tag)
-    elif tag == "" and moddate != "":
-        feed = feedparser.parse(show[3], modified=moddate)
-    elif tag == "" and moddate == "":
-        feed = feedparser.parse(show[3])
-    else:
-        feed = feedparser.parse(show[3], etag=tag, modified=moddate)
-    # Bozo basically checks for everything (already downed (etags) no server, 404, or even an ill-formed XML!).
-    if feed.bozo > 0:
-        if "status" in feed:
-            if feed.status == 304:
-                print "Feed %s has not changed (etag=%s, moddate=%s)."%(show[0],str(tag),str(moddate))
-                continue
-            # This is an ignored exception, for _this_ one feed.
-            elif len(show) > 4 and show[4] == str(feed.bozo_exception):
-                pass
-            else:
-                err_tup = (
-                    show[0].decode('unicode_escape'),
-                    feed.status,
-                    feed.href.decode('unicode_escape'),
-                    unicode(feed.bozo_exception),
+# *Unicode Filenames*
+# In Linux/Unix (NOT macOS) the bytes representation of a file name is all
+# that is recorded in the file system.  In Windows the file name encoding
+# changes based on the current default code-page and is sometimes
+# case-insensitive.  In macOS they almost use UTF-8, but will decompose all
+# characters (use combining characters whenever possible).  This sucks.  You
+# would hope that there would be some way in Python to create a file and make
+# sure when you call os.listdir you get a str/bytes that compares to True
+# with the original str/bytes you used to create the file, but you can't.
+# At all.  On Linux/Unix you can use bytes and this will work.  On Windows
+# there is a PEP to make using str (NOT bytes) always to do right thing based
+# on the default code-page so that that will work, though if you use a case-
+# insensitive file system that won't always work.  And on macOS you can't do
+# it at all because macOS will save the file decomposed but still allow you
+# to open it with the composed name.  Which means when you run os.listdir
+# you get back a different encoding.  So, for example, if you create a file
+# called b'_\xc3\xa9_' you can open it with all the following arguments:
+#    b'_\xc3\xa9_'
+#    b'_e\xcc\x81_'
+#    '_é_'
+# All of which refer to the same file.  And when you call os.listdir you
+# always get b'_e\xcc\x81_' or '_é_' (with the decomposed code-points)
+# even when you used b'_\xc3\xa9_' or '_é_' (with a composed code-point) to
+# create it.
+#
+# Anyway.  What this means for this script is that I will always use str to
+# store file paths (never bytes) and then when a status file for a given
+# short-name is created will run os.listdir and see if it compares as equal.
+# If not an error will be printed saying to change the short-name in the
+# conf file to something that the file system won't munge.
+existing_status_files = os.listdir(status_dir)
+for sn in feeds:
+    try:
+        # If we can remove, then the file is there.
+        existing_status_files.remove(sn)
+    except:
+        wrn("Creating status file for \"%s\"." % sn)
+        # We create a directory inside the status dir (to make sure it's on
+        # the same filesystem) and try and create a file with this name, and
+        # then call listdir to read it back to make sure the file system
+        # isn't munging it.  See the comment *Unicode Filenames* above.
+        tmp_dir = os.path.join(status_dir, 'tmp')
+        try:
+            os.mkdir(tmp_dir)
+        except:
+            bye("Could not create tmp dir inside the status dir."
+                "Need to do this to make sure it's empty before running the"
+                "listdir on it.  Please remove this directory before running"
+                "this again: %s" % tmp_dir)
+        with open(os.path.join(tmp_dir, sn), "w") as f:
+            f.write('Test file, please delete.\n')
+        fs = os.listdir(tmp_dir)
+        for f in fs:
+            os.remove(os.path.join(tmp_dir, f))
+        os.rmdir(tmp_dir)
+        if not sn in fs:
+            bye("The short-name \"%s\" is being munged by the file system:\n"
+                "%s\nEven if there are other fixes (like normalization on "
+                "macOS, using str on \nWindows, and using bytes on "
+                "Linux/Unix) they are annoying, might not always \nwork, and "
+                "might change unexpectedly in the future, so instead you "
+                "should \njust change the short name you are using to "
+                "something that won't be munged by \nthe file system you are "
+                "using." % (
+                    str(bytes(sn, "UTF-8")),
+                    str([str(bytes(s, "UTF-8")) for s in fs]),
                 )
-                wrn("Feed %s was not parsed as bozo > 0 (status=%i, href=%s, bozo_exception=%s)." % err_tup )
-                feed_errors.append(err_tup)
+            )
+        with open(os.path.join(status_dir, sn), "w") as f:
+            json.dump(
+                {"etag": None, "modified": None, "downloaded_links": []},
+                f)
+
+    # No matter if it's ignored or asked, etc., we try and read the status.
+    with open(os.path.join(status_dir, sn), "r") as f:
+        st = json.load(f)
+    feeds[sn]["etag"] = st["etag"]
+    feeds[sn]["modified"] = st["modified"]
+    feeds[sn]["downloaded_links"] = st["downloaded_links"]
+
+if len(existing_status_files) != 0:
+    bye("Unknown status file(s) found:\n%s\n"
+        "Either remove the status file(s) or create entries in the conf file"
+        " (with\n a mode of \"ignore\" if you don't want the status file to"
+        " be read at all)." % str(existing_status_files))
+
+
+# Save result of what we do with each feed.
+feeds_stats_ignored = []  # List of short-names.
+feeds_stats_unchanged = []  # List of 3-tuples of (sn, etag, modified).
+feeds_stats_errors = []  # List of 2-tuples of (short-name, error-message).
+feeds_stats_downloads = {}  # sn -> [n_down, n_skipped, [errors, ...]]
+
+feeds_to_fetch = []  # List of short-names.
+feeds_to_fetch_ignore_etag_modified = []  # List of short-names.
+feeds_to_ask_if_fetch = []  # List of short-names.
+for sn in feeds:
+    if "ignore" == feeds[sn]["mode"]:
+        feeds_stats_ignored.append(sn)
+    elif feeds[sn]["mode"] in ("get", "select"):
+        feeds_to_fetch.append(sn)
+    elif "all" == feeds[sn]["mode"]:
+        feeds_to_fetch_ignore_etag_modified.append(sn)
+    elif "ask" == feeds[sn]["mode"]:
+        feeds_to_ask_if_fetch.append(sn)
+    else:
+        bye("Unknown mode \"%s\" for \"%s\"." % (str(feeds[sn]["mode"]), sn))
+
+
+# Now that all the errors checking is done, there are two places that do
+# I/O, fetching the feeds, and downloading each episode of them. Those are
+# done in threads, and everything else is done in this main thread.
+
+# Two thread pools are used one to fetch and parse the XML with feedparser,
+# and the second to download episodes.  These two pools must both check the
+# same semaphone to make sure max_connections isn't exceeded (and since they
+# are both just doing I/O there doesn't need to be more than that many
+# threads in each).
+max_connections_semaphore = threading.BoundedSemaphore(max_connections)
+# Assume given program is NOT thread-safe.
+putjoysuck_semaphore = threading.BoundedSemaphore(1)
+# We send all the feeds to fetch either respecting etags/modified-times or
+# not, while asking about the rest of feeds, then take the results (after
+# asking about all the feeds) and asking (if needed) about each episode.
+# For all the threads if they get a None on the queue they should exit.
+# 4-tuple with (sn, url, etag, modified)
+fetch_in_queue = queue.Queue()
+# 2-tuple with (sn, parsed_feed_from_feedparser)
+fetch_out_queue = queue.Queue()
+
+def fetch_thread_function(local):
+    global max_connections_semaphore
+    global fetch_in_queue
+    global fetch_out_queue
+    global feeds_stats_errors
+    # Everything else should be local.
+    while True:
+        local.item = fetch_in_queue.get()
+        if not local.item:
+            return None
+
+        # We should have gotten a 4-tuple with (sn, url, etag, modified).
+        local.sn = local.item[0]
+        local.url = local.item[1]
+        local.etag = local.item[2]
+        local.modified = local.item[3]
+
+        try:
+            max_connections_semaphore.acquire()
+
+            if local.etag and local.modified:
+                local.feed = feedparser.parse(local.url,
+                                            etag=local.etag,
+                                        modified=local.modified)
+            elif local.etag:
+                local.feed = feedparser.parse(local.url,
+                                            etag=local.etag)
+            elif local.modified:
+                local.feed = feedparser.parse(local.url,
+                                            modified=local.modified)
+            else:
+                local.feed = feedparser.parse(local.url)
+        except:
+            feeds_stats_errors.append((local.sn, str(sys.exc_info()[1])))
+            continue
+        finally:
+            max_connections_semaphore.release()
+
+        fetch_out_queue.put((local.sn, local.feed))
+
+
+# (sn, [url, ...], desc, pub_dt)
+download_in_queue = queue.Queue()
+# (sn, [url, ...], str(error/success message))
+download_out_queue = queue.Queue()
+
+def download_thread_function(local):
+    """Should download and call putjoysuck, returning the error string
+    and url's to record."""
+    global max_connections_semaphore
+    global putjoysuck_semaphore
+    global download_in_queue
+    global download_out_queue
+    global putjoysuck
+    global work_dir
+    # Everything else should be local.
+    while True:
+        local.item = download_in_queue.get()
+        if not local.item:
+            return None
+
+        local.sn = local.item[0]
+        local.urls = local.item[1]
+        local.desc = local.item[2]
+        local.pub_dt = local.item[3]
+
+        local.f, local.fn = tempfile.mkstemp(   suffix='',
+                                                prefix='%s-' % local.sn,
+                                                dir=work_dir,
+                                                text=False)
+        os.close(local.f)
+        # Define here so we can include in error messages.
+        local.putjoysuck_cmd = [putjoysuck,
+                local.sn, local.desc, local.fn, local.pub_dt]
+
+        try:
+            max_connections_semaphore.acquire()
+            local.fn, local.headers = urllib.request.urlretrieve(
+                    local.urls[0], filename=local.fn)
+        except:
+            msg = "Error getting %s:\n%s\n%s\n%s\nWould have run: %s" % (
+                local.sn,
+                str(local.urls),
+                str(local.headers),
+                str(sys.exc_info()[1]),
+                str(local.putjoysuck_cmd),
+            )
+            download_out_queue.put((local.sn, [], msg))
+            continue
+        finally:
+            max_connections_semaphore.release()
+
+        try:
+            putjoysuck_semaphore.acquire()
+            p = subprocess.Popen(   local.putjoysuck_cmd,
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+            o, e = p.communicate()
+            if 0 != p.returncode or o or e:
+                download_out_queue.put((
+                    local.sn,
+                    [],
+                        "Error running:\n"
+                        "%s\n"
+                        "return code = %d\n"
+                        "out:\n%s\n"
+                        "err:\n%s" % (
+                            str(local.putjoysuck_cmd),
+                            p.returncode,
+                            str(o),
+                            str(e),
+                        )
+                ))
                 continue
+        except:
+            download_out_queue.put((
+                local.sn,
+                [],
+                "Error running:\n%s\n%s" % (
+                    str(local.putjoysuck_cmd),
+                    str(sys.exc_info()[1]),
+                )
+            ))
+            continue
+        finally:
+            putjoysuck_semaphore.release()
+
+        os.remove(local.fn)
+        download_out_queue.put((local.sn, local.urls, "%s: got %s %s" % (
+            local.sn, local.pub_dt, local.desc)))
+
+
+def shuttle_fetch_out_to_download_in():
+    global feeds
+    global fetch_out_queue
+    global download_in_queue
+    global feeds_stats_downloads
+
+    shows_to_select_from = []
+    shows_to_get_from = []
+
+    while True:
+        try:
+            sn, feed = fetch_out_queue.get_nowait()
+        except:
+            break
+        if feeds[sn]["mode"] in ("all", "ask", "select"):
+            shows_to_select_from.append((sn, feed))
+            continue
+        elif feeds[sn]["mode"] != "get":
+            wrn("Bad mode \"%s\" post fetch in %s." % (feeds[sn]["mode"], sn))
+            continue
+        # We "get" this feed.
+
+        if "etag" in feed:
+            feeds[sn]["etag"] = feed.etag
         else:
-            err_tup = (show[0], None, None, str(feed.bozo_exception))
-            wrn("Feed %s was not parsed as bozo > 0 and there was no status (bozo_exception=%s)." % (err_tup[0], err_tup[3]))
-            feed_errors.append(err_tup)
+            feeds[sn]["etag"] = None
+
+        if "modified" in feed:
+            feeds[sn]["modified"] = feed.modified
+        else:
+            feeds[sn]["modified"] = None
+
+        if "status" in feed and feed.status == 304:
+            feeds_stats_unchanged.append((
+                sn, feeds[sn]["etag"], feeds[sn]["modified"]))
             continue
 
-    # Now we have a feed to parse.
-    # check etags.
-    if n_etags != None:
-        if "modified" in feed:
-            etags[n_etags][1] = feed.modified
-        if "etag" in feed:
-            etags[n_etags][2] = feed.etag
-    else:
-        f = [show[0],]
-        i = 0
-        if "modified" in feed:
-            f.append(feed.modified)
-            i = 1
-        else:
-            f.append("")
-        if "etag" in feed:
-            f.append(feed.etag)
-            i = 1
-        else:
-            f.append("")
-        if i == 1:
-            etags.append(f)
+        if feed.bozo > 0:
+            if not feeds[sn]["ignore_bozo_function"](str(feed.bozo_exception)):
+                feeds_stats_errors.append((sn, str(feed.bozo_exception)))
+                continue
 
+        shows_to_get_from.append((sn, feed))
 
-    n_e_tot = len(feed.entries)
-    n_e_done = 0
-    if op_print_feed :
-        i = feed.feed
-        # We only really print info that _may_ be used to taf this feed.
-        for s in "title", "subtitle", "rights", "generator", "info", "updated", "id", "author", "contributors", "image.title", "publisher:", "tags:", "language:", "license:", "errorreportsto:":
-            if s in i:
-                if len(s) > 15: sz = 1
-                else: sz = 15 - len(s)
-                st = s + ":"
-                while sz > 0:
-                    st = st + " "
-                    sz = sz - 1
-                prn(st, i[s])
-    #This should iterated sorted by the updates_parsed field.
-    # So every now and again a feed just does not have _any_ dates included.
-    # when this happenhs updated_parsed is the only date availrable and, it seems
-    # that we want to get 'em in the reverse order from the feedparser ???
-    # fuck knows why.
-    feed.entries.reverse()
-    all_done_count = 0
-    for i in sorted(feed.entries,cmp=cmp,key=lambda x:x.updated_parsed):
-        if debug: print "\n\n\n\n"+str(i)
-        try:
-            pub_dt = time.strftime("%a%d%b%y-%H%M", i.published_parsed)
-        except:
-            pub_dt = time.strftime("%a%d%b%y-%H%M", time.localtime())
-        try:
-            try:
-                entry_guid = i.id
-                if len(entry_guid) < 15:
-                    entry_guid = None
-            except:
-                entry_guid = None
-            for j in i.enclosures:
-                # The default action is set per ep.
-                op_op_get_ep = op_get_ep
-                n_e_done = n_e_done + 1
+    # We always send the plain gets first, and then ask, expecting we'll
+    # be called repeatedly until all the feeds are shuttled.
+    # But we only really need one loop through them.
+    shows = []  # 3-tuple, (select (True/False), sn, feed)
+    for s in shows_to_get_from:
+        shows.append((False, s[0], s[1]))
+    for s in shows_to_select_from:
+        shows.append((True, s[0], s[1]))
+    for show in shows:
+        select = show[0]
+        sn = show[1]
+        feed = show[2]
+        # So every now and again a feed just does not have _any_ dates
+        # included, so updated_parsed is the only date available.
+        feed.entries.reverse()  # Oldest first.
+        for entry in sorted(feed.entries, key=lambda x:x.updated_parsed):
+            if "published_parsed" in entry:
+                pub_dt = time.strftime("%a%d%b%y-%H%M", entry.published_parsed)
+            else:
+                pub_dt = time.strftime("%a%d%b%y-%H%M", time.localtime())
 
-                # op_use_already_dl
-                if op_use_already_dl and ( j.href in all_done or entry_guid in all_done ):
-                    all_done_count = all_done_count + 1
-                    if debug:
-                        print "Found in all_done_file, would not GET: %s"%(j.href)
+            if "title" == feeds[sn]["tag_field"] and "title" in entry:
+                tag = entry.title
+            elif "published" == feeds[sn]["tag_field"]:
+                if "published_parsed" in entry:
+                    tag = time.strftime("%a%d%b%Y", entry.published_parsed)
+                elif "updated_parsed" in entry:
+                    tag = time.strftime("%a%d%b%Y", entry.updated_parsed)
                 else:
-                    print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
-                    if 0 < all_done_count:
-                        print "Found %i enclosures in all_done_file."%(all_done_count)
-                        all_done_count = 0
-                        print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
-                    print "GET: %s"%(j.href)
+                    tag = time.strftime("%a%d%b%Y", time.localtime())
+            elif "date" == feeds[sn]["tag_field"]:
+                tag = time.strftime("%a%d%b%Y", time.localtime())
+            elif "ask" == feeds[sn]["tag_field"]:
+                wrn("")
+                wrn(sn)
+                for t in ("title", "summary", "content", "published",
+                        "updated", "created", "expired", "id", "author",
+                        "contributors", "publisher", "comments", "licence"):
+                    if t in entry:
+                        wrn("%s: %s" % (t, entry[t]))
+                tag = input("What do you want to use as the tag? ")
+                if len(tag) == 0:
+                    wrn("Tag cannot be blank, using current time.")
+                    tag = time.strftime("%a%d%b%Y", time.localtime())
+            else:
+                wrn("Unknown tag_field here (using date): %s" % (
+                    feeds[sn]["tag_field"],
+                ))
+                tag = time.strftime("%a%d%b%Y", time.localtime())
 
 
-                    # op_print_ep
-                    if op_print_ep :
-                        # Now we print the possible ``tags''.
-                        for s in "title", "summary", "content", "published", "updated", "created", "expired", "id", "author", "contributors", "publisher", "tags", "comments", "licence":
-                            if s in i:
-                                if len(s) > 15: sz = 1
-                                else: sz = 15 - len(s)
-                                st = "        " + s + ":"
-                                while sz > 0:
-                                    st = st + " "
-                                    sz = sz - 1
-                                prn(st, i[s])
+            # Annoyingly entry.id might be the only url, and if not we treat
+            # it as one because it is supposed to be a unique ID, so if a
+            # feed changes all its download URLs, this will still match.
+            if "id" in entry:
+                guid = entry.id
+            else:
+                guid = None
 
+            if not "enclosures" in entry or not entry.enclosures:
+                wrn("%s has an entry with no enclosures, skipping." % sn)
+                continue
+            # Also, there could be multiple enclosures (links so we need to
+            # loop through them all (if guid matches skip all of them).
+            for enc in entry.enclosures:
+                print(str(enc.href))
+                if enc.href in feeds[sn]["downloaded_links"] or \
+                        (guid and guid in feeds[sn]["downloaded_links"]):
+                    feeds[sn]["new_downloaded_links"].add(enc.href)
+                    if guid:
+                        feeds[sn]["new_downloaded_links"].add(guid)
+                    if not sn in feeds_stats_downloads:
+                        feeds_stats_downloads[sn] = [0, 0, []]
+                    feeds_stats_downloads[sn][1] = \
+                            feeds_stats_downloads[sn][1] + 1
+                    continue
 
-                    # op_ask_ep
-                    if op_ask_ep :
-                        input = raw_input("Do you want to {s}kip, {m}ark as d/l~ed, or {d}/l (and mark)? [skip] ")
-                        if len(input) != 1 or input == "s":
-                            print "\n---------------------------------> Skipping.\n"
-                            op_op_get_ep = False
-                        elif input[0] == "m" or input[0] == "M":
-                            add_to_all_done(j.href, entry_guid)
-                            op_op_get_ep = False
-                        elif input[0] == "d" or input[0] == "D":
-                            op_op_get_ep = True
-                        else:
-                            print "\n---------------------------------> Invalid input \"%s\", skipping.\n"%(input)
-                            op_op_get_ep = False
-
-
-                    # op_get_ep  set above!
-                    if op_op_get_ep :
-                        # Now we try and get.
-                        # This is first so we can do error checking.
-                        descrip = get_tag(show[2], i, j)
-                        print "Getting..."
-                        if 0 < subprocess.call([wget, "-O", outfn, j.href]):
-                            wrn("Error downloading \"%s\" to \"%s\"."%(j.href,outfn))
-                        else:
-                            if 0 < subprocess.call([putjoysuck, show[0], descrip, outfn, pub_dt]):
-                                wrn("Error with %s \"%s\" \"%s\" \"%s\""%(putjoysuck, show[0], descrip, outfn))
-                            else:
-                                add_to_all_done(j.href, entry_guid)
-                                print "Deleting the downloaded file...",
-                                os.remove(outfn)
-                                print "done."
+                if select:
+                    wrn("")
+                    wrn(sn)
+                    for t in ("title", "summary", "content", "published",
+                            "updated", "created", "expired", "id", "author",
+                            "contributors", "publisher", "comments", "licence"):
+                        if t in entry:
+                            wrn("%s: %s" % (t, entry[t]))
+                    wrn(enc.href)
+                    act = input("Do you want to {s}kip, {m}ark (and not "
+                        "downloaded), or {d}ownload (and mark)? [skip] ")
+                    if len(act) < 1:
+                        act = "s"
+                    if act[0] in ("m", "M"):
+                        wrn("Marking.")
+                        feeds[sn]["new_downloaded_links"].add(enc.href)
+                        if guid:
+                            feeds[sn]["new_downloaded_links"].add(guid)
+                        continue
+                    elif act[0] in ("d", "D"):
+                        wrn("Queueing download.")
                     else:
-                        print "Would've d/l~ed and run put-joysuck \"%s\" <get_tag(<type>, ...)> \"%s\"."%(show[0],outfn)
-        except AttributeError:
-            # Sometimes feeds are broken, that is items don't have enclosures.
-            print "\nNO ENCLOSURES FOUND:\n"
-            try:
-                print pprint.PrettyPrinter().pformat(i)
-            except:
-                print str(i)
-            finally:
-                print "\n"
+                        wrn("Skipping")
+                        continue
 
-    if 0 < all_done_count:
-        print "\n----------------------------------\n%i/%i:"%(n_e_done, n_e_tot),
-        print "Found %i enclosures in all_done_file."%(all_done_count)
-        all_done_count = 0
+                # sn, urls..., desc, pub_dt
+                urls = [enc.href, ]
+                if guid:
+                    urls.append(guid)
+                download_in_queue.put((sn, urls, tag, pub_dt))
+                continue
 
-print "\n---------------------------------"
-print "Total %i shows where checked, and maybe downloaded." % (n_shows, )
-print "\n---------------------------------"
 
-for s in feed_errors:
-    wrn("Feed %s was not parsed:" % (unicode(s[0]), ))
-    wrn("Feed status = %s" %(unicode(s[1]), ))
-    wrn("Feed HREF = %s" %(unicode(s[2]), ))
-    wrn("Feed bozo = %s" %(unicode(s[3]), ))
-    wrn("\n---------------------------------")
 
-if n_shows == 0:
-    err("\nIt seems as if nothing was done!", 1)
-# All good.
-bye()
 
+t_local = threading.local()
+for i in range(max_connections):
+    threading.Thread(target=fetch_thread_function, args=(t_local, )).start()
+    threading.Thread(target=download_thread_function, args=(t_local, )).start()
+
+if threading.active_count() != 2 * max_connections + 1:
+    bye("Not all threads started.  Active count = %d, max_conn = %d" % (
+        threading.active_count(), max_connections))
+# When active count is this much all the fetch threads have terminated.
+t_active_count_after_fetch = max_connections + 1
+
+for sn in feeds_to_fetch:
+    fetch_in_queue.put((
+        sn, feeds[sn]["url"], feeds[sn]["etag"], feeds[sn]["modified"]))
+for sn in feeds_to_fetch_ignore_etag_modified:
+    fetch_in_queue.put((sn, feeds[sn]["url"], None, None))
+
+for sn in feeds_to_ask_if_fetch:
+    act = input("Fetch XML for %s? [no] " % sn)
+    if len(act) > 0 and act[0] in ("y", "Y"):
+
+        act = input("Check if entries have already been downloaded? [yes] ")
+        if len(act) > 0 and act[0] in ("n", "N"):
+            wrn("Clearing downloaded links.")
+            feeds[sn]["downloaded_links"] = []
+        else:
+            wrn("Will use downloaded links.")
+
+        act = input("Respect etag/modified-time? [yes] ")
+        if len(act) > 0 and act[0] in ("n", "N"):
+            wrn("Queueing fetch without respecting etags/modified-time.")
+            fetch_in_queue.put((sn, feeds[sn]["url"], None, None))
+        else:
+            wrn("Queueing fetch (using etags/modified-time).")
+            fetch_in_queue.put((sn, feeds[sn]["url"],
+                feeds[sn]["etag"], feeds[sn]["modified"]))
+    else:
+        wrn("Skipping %s" % sn)
+        feeds_stats_ignored.append(sn)
+
+# Terminate the fetch treads.
+for i in range(max_connections):
+    fetch_in_queue.put(None)
+
+while threading.active_count() != t_active_count_after_fetch:
+    # We keep waiting for this b/c this is what asks all the questions.
+    # When this is done we know there is nothing else to put in downloads.
+    shuttle_fetch_out_to_download_in()
+
+# Have to run it again b/c we don't know when the check/queueing was done.
+shuttle_fetch_out_to_download_in()
+
+for i in range(max_connections):
+    download_in_queue.put(None)  # Terminate the download threads.
+
+
+def collect_download_results():
+    global download_out_queue
+    global feeds_stats_downloads
+    global feeds
+    try:
+        while True:
+            sn, urls, msg = download_out_queue.get_nowait()
+            if not sn in feeds_stats_downloads:
+                feeds_stats_downloads[sn] = [0, 0, []]  # Success, skip, errors.
+            if not urls:
+                feeds_stats_downloads[sn][2].append(msg)
+            else:
+                feeds_stats_downloads[sn][0] = feeds_stats_downloads[sn][0] + 1
+                for url in urls:
+                    feeds[sn]["new_downloaded_links"].add(url)
+    except:
+        pass  # No items
+
+while threading.active_count() != 1:  # Wait for all the download threads.
+    collect_download_results()
+# And then we run this again, in case anything got lost.
+collect_download_results()
+
+urllib.request.urlcleanup()
+
+wrn("")
+
+for sn in feeds_stats_ignored:
+    wrn("Ignored %s" % sn)
+for t in feeds_stats_unchanged:
+    wrn("Unchanged %s (etag=%s, modified=%s)" % (t[0], t[1], t[2]))
+for sn in feeds_stats_downloads:
+    wrn("%s had %d successfull downloads, %d skips, and %d errors:" % (sn,
+        feeds_stats_downloads[sn][0], feeds_stats_downloads[sn][1],
+        len(feeds_stats_downloads[sn][2])))
+    for err in feeds_stats_downloads[sn][2]:
+        wrn("    %s" % err)
+for t in feeds_stats_errors:
+    wrn("Errors in %s: %s" % (t[0], t[1]))
+
+
+wrn("")
+
+wrn("%d total, %d ignored, %d unchanged, %d downloaded, and %d errors." % (
+    len(feeds), len(feeds_stats_ignored), len(feeds_stats_unchanged),
+    len(feeds_stats_downloads), len(feeds_stats_errors)))
+
+if len(feeds) != \
+        len(feeds_stats_ignored) + len(feeds_stats_unchanged) + \
+        len(feeds_stats_downloads) + len(feeds_stats_errors):
+    wrn("Total DOES NOT equal ignored + unchanged + downloaded + errors!!!!")
+    wrn("What is happening?")
+
+for sn in feeds:
+    if feeds[sn]["new_downloaded_links"] and feeds[sn]["mode"] != "ignore":
+        wrn("Saving etags, mod time, and d/l links for %s." % sn)
+        with open(os.path.join(status_dir, sn), "w") as f:
+            json.dump({
+                "etag": feeds[sn]["etag"],
+                "modified": feeds[sn]["modified"],
+                "downloaded_links": list(feeds[sn]["new_downloaded_links"]),
+            }, f)
+
+if not len(os.listdir(work_dir)) == 0:
+    wrn("Work dir \"%s\" is not empty, which means there are" % work_dir)
+    wrn(" left-over files you may want to recover.  Delete them before")
+    bye(" trying to re-run this script.")
+
+
+wrn("Finished.")
