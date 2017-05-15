@@ -197,8 +197,11 @@ for sn in feeds:
                 "Need to do this to make sure it's empty before running the"
                 "listdir on it.  Please remove this directory before running"
                 "this again: %s" % tmp_dir)
-        with open(os.path.join(tmp_dir, sn), "w", encoding="UTF-8") as f:
-            f.write('Test file, please delete.\n')
+        try:
+            with open(os.path.join(tmp_dir, sn), "w", encoding="UTF-8") as f:
+                f.write('Test file, please delete.\n')
+        except:
+            pass
         fs = os.listdir(tmp_dir)
         for f in fs:
             os.remove(os.path.join(tmp_dir, f))
