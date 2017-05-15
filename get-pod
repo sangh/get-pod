@@ -62,7 +62,7 @@ if not conf_filename:
     conf_filename = os.path.join(os.path.expanduser("~"), ".get-pod.conf")
 
 try:
-    with open(conf_filename, "r") as f:
+    with open(conf_filename, "r", encoding="UTF-8") as f:
         exec(f.read())
 except:
     bye("Cannot access conf file: %s" % conf_filename)
@@ -197,7 +197,7 @@ for sn in feeds:
                 "Need to do this to make sure it's empty before running the"
                 "listdir on it.  Please remove this directory before running"
                 "this again: %s" % tmp_dir)
-        with open(os.path.join(tmp_dir, sn), "w") as f:
+        with open(os.path.join(tmp_dir, sn), "w", encoding="UTF-8") as f:
             f.write('Test file, please delete.\n')
         fs = os.listdir(tmp_dir)
         for f in fs:
@@ -216,13 +216,13 @@ for sn in feeds:
                     str([str(bytes(s, "UTF-8")) for s in fs]),
                 )
             )
-        with open(os.path.join(status_dir, sn), "w") as f:
+        with open(os.path.join(status_dir, sn), "w", encoding="UTF-8") as f:
             json.dump(
                 {"etag": None, "modified": None, "downloaded_links": []},
                 f)
 
     # No matter if it's ignored or asked, etc., we try and read the status.
-    with open(os.path.join(status_dir, sn), "r") as f:
+    with open(os.path.join(status_dir, sn), "r", encoding="UTF-8") as f:
         st = json.load(f)
     feeds[sn]["etag"] = st["etag"]
     feeds[sn]["modified"] = st["modified"]
@@ -679,7 +679,7 @@ if len(feeds) != \
 for sn in feeds:
     if feeds[sn]["new_downloaded_links"] and feeds[sn]["mode"] != "ignore":
         wrn("Saving etags, mod time, and d/l links for %s." % sn)
-        with open(os.path.join(status_dir, sn), "w") as f:
+        with open(os.path.join(status_dir, sn), "w", encoding="UTF-8") as f:
             json.dump({
                 "etag": feeds[sn]["etag"],
                 "modified": feeds[sn]["modified"],
