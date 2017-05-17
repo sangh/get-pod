@@ -495,7 +495,7 @@ def shuttle_fetch_out_to_download_in():
                 tag = time.strftime("%a%d%b%Y", time.localtime())
             elif "ask" == feeds[sn]["tag_field"]:
                 wrn("")
-                wrn("%s: %d / %d" % (sn, n_entry_curr, n_entries_in_feed)
+                wrn("%s: %d / %d" % (sn, n_entry_curr, n_entries_in_feed))
                 for t in ("title", "summary", "content", "published",
                         "updated", "created", "expired", "id", "author",
                         "contributors", "publisher", "comments", "licence"):
@@ -539,7 +539,7 @@ def shuttle_fetch_out_to_download_in():
 
                 if select:
                     wrn("")
-                    wrn("%s: %d / %d" % (sn, n_entry_curr, n_entries_in_feed)
+                    wrn("%s: %d / %d" % (sn, n_entry_curr, n_entries_in_feed))
                     for t in ("title", "summary", "content", "published",
                             "updated", "created", "expired", "id", "author",
                             "contributors", "publisher", "comments", "licence"):
