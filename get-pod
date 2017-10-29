@@ -353,6 +353,7 @@ def download_thread_function(local):
                                                 text=False)
         os.close(local.f)
         # Define here so we can include in error messages.
+        local.headers = None
         local.putjoysuck_cmd = [putjoysuck,
                 local.sn, local.desc, local.fn, local.pub_dt]
 
