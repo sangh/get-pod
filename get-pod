@@ -18,7 +18,7 @@ that file name doesn't start with the "-" character.
 This program uses threads and assumes that this script has *exclusive*
 access to both the conf file (for reading) and the status and work directories
 specified in it for both reading and writing.  Each thread only touches a
-single file so shouldn't need coordination among themselves.
+single file so they shouldn't need coordination among themselves.
 """
 
 import urllib.request
@@ -69,6 +69,15 @@ except:
 
 # Won't print anything, but will error if not defined or castable to an int.
 int(max_connections)
+
+
+# Allow conf file to override, and distingush between defined and non-float.
+try:
+    seconds_between_printing_thread_state
+except:
+    seconds_between_printing_thread_state = 120.0
+float(seconds_between_printing_thread_state)  # Error if not a float.
+
 
 # These need to be str, see the comment called *Unicode Filenames* below.
 for d in (status_dir, work_dir, putjoysuck):
@@ -617,10 +626,17 @@ for sn in feeds_to_ask_if_fetch:
 for i in range(max_connections):
     fetch_in_queue.put(None)
 
+# We print a message if this takes too long.
+time_to_print = time.time() + seconds_between_printing_thread_state
 while threading.active_count() != t_active_count_after_fetch:
     # We keep waiting for this b/c this is what asks all the questions.
     # When this is done we know there is nothing else to put in downloads.
     shuttle_fetch_out_to_download_in()
+    if time.time() > time_to_print:
+        time_to_print = time.time() + seconds_between_printing_thread_state
+        wrn("Waiting for fetch---thread active count is %d,"
+            " fetch_in_queue approx. length is %d." % (
+            threading.active_count(), fetch_in_queue.qsize()))
 
 # Have to run it again b/c we don't know when the check/queueing was done.
 shuttle_fetch_out_to_download_in()
@@ -647,8 +663,20 @@ def collect_download_results():
     except:
         pass  # No items
 
+# We print a message if this takes too long.
+time_to_print = time.time() + seconds_between_printing_thread_state
 while threading.active_count() != 1:  # Wait for all the download threads.
     collect_download_results()
+    if time.time() > time_to_print:
+        time_to_print = time.time() + seconds_between_printing_thread_state
+        wrn("Waiting for downloads---thread active count is %d,"
+            " download_in_queue approx. size is %d, and total size of"
+            " files in the work dir is %s." % (
+                threading.active_count(),
+                download_in_queue.qsize(),
+                '{:,}'.format(
+                    sum(os.path.getsize(f) for f in os.listdir(work_dir)))))
+
 # And then we run this again, in case anything got lost.
 collect_download_results()
 
