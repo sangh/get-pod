@@ -634,9 +634,9 @@ while threading.active_count() != t_active_count_after_fetch:
     shuttle_fetch_out_to_download_in()
     if time.time() > time_to_print:
         time_to_print = time.time() + seconds_between_printing_thread_state
-        wrn("Waiting for fetch---thread active count is %d,"
+        wrn("Waiting for fetch---bg thread count is %d,"
             " fetch_in_queue approx. length is %d." % (
-            threading.active_count(), fetch_in_queue.qsize()))
+            threading.active_count() - 1, fetch_in_queue.qsize()))
 
 # Have to run it again b/c we don't know when the check/queueing was done.
 shuttle_fetch_out_to_download_in()
@@ -669,13 +669,17 @@ while threading.active_count() != 1:  # Wait for all the download threads.
     collect_download_results()
     if time.time() > time_to_print:
         time_to_print = time.time() + seconds_between_printing_thread_state
-        wrn("Waiting for downloads---thread active count is %d,"
-            " download_in_queue approx. size is %d, and total size of"
-            " files in the work dir is %s." % (
-                threading.active_count(),
-                download_in_queue.qsize(),
-                '{:,}'.format(
-                    sum(os.path.getsize(f) for f in os.listdir(work_dir)))))
+        f_totsz = 0
+        for f in os.listdir(work_dir):
+            try:  # Files can be removed between listdir and getsize.
+                f_totsz = f_totsz + os.path.getsize(os.path.join(work_dir, f))
+            except:
+                pass
+        wrn("Waiting for downloads---bg thread count is %d,"
+            " download_in_queue approx. size is %d, and approx. total size"
+            " of files in the work dir is %s bytes." % (
+                threading.active_count() - 1, download_in_queue.qsize(),
+                '{:,}'.format(f_totsz), ))
 
 # And then we run this again, in case anything got lost.
 collect_download_results()
