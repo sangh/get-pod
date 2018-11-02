@@ -356,7 +356,16 @@ def download_thread_function(local):
         local.desc = local.item[2]
         local.pub_dt = local.item[3]
 
-        local.f, local.fn = tempfile.mkstemp(   suffix='',
+        # We want to guess the type.  Unfortunetly if the url ends with .mp3,
+        # python's mimetypes.guess_type() will return 'audio/mpeg' and then
+        # mimetypes.guess_exstention() will return '.mp2', grrr.
+        # So, instead of "doing the right thing", we call split ext on the
+        # url and if it's too long or empty we guess mp3.  :(
+        tempfile_suffix = os.path.splitext(local.urls[0])[1]
+        if len(tempfile_suffix) > 6 or len(tempfile_suffix) < 2:
+            tempfile_suffix = '.mp3'
+
+        local.f, local.fn = tempfile.mkstemp(   suffix=tempfile_suffix,
                                                 prefix='%s-' % local.sn,
                                                 dir=work_dir,
                                                 text=False)
