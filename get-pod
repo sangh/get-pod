@@ -566,7 +566,7 @@ def shuttle_fetch_out_to_download_in():
                             wrn("%s: %s" % (t, entry[t]))
                     wrn(enc.href)
                     act = input("Do you want to {s}kip, {m}ark (and not "
-                        "downloaded), or {d}ownload (and mark)? [skip] ")
+                        "download), or {d}ownload (and mark)? [skip] ")
                     if len(act) < 1:
                         act = "s"
                     if act[0] in ("m", "M"):
