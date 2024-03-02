@@ -22,7 +22,7 @@ single file so they shouldn't need coordination among themselves.
 """
 
 import urllib.request
-import os, sys, time, json, queue, tempfile, threading, subprocess
+import os, sys, time, json, queue, shutil, tempfile, threading, subprocess
 import feedparser
 
 
