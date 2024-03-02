@@ -371,20 +371,22 @@ def download_thread_function(local):
                                                 text=False)
         os.close(local.f)
         # Define here so we can include in error messages.
-        local.headers = None
         local.putjoysuck_cmd = [putjoysuck,
                 local.sn, local.desc, local.fn, local.pub_dt]
 
         try:
             max_connections_semaphore.acquire()
-            local.fn, local.headers = urllib.request.urlretrieve(
-                    local.urls[0], filename=local.fn)
-        except:
+            with urllib.request.urlopen(urllib.request.Request(
+                    local.urls[0],
+                    headers={'User-Agent': 'Mozilla/5.0'})
+                ) as resp, open(local.fn, "wb") as f:
+                shutil.copyfileobj(resp, f)
+        except Exception as exp:
             msg = "Error getting %s:\n%s\n%s\n%s\nWould have run: %s" % (
                 local.sn,
                 str(local.urls),
-                str(local.headers),
-                str(sys.exc_info()[1]),
+                str(resp.headers.as_string().strip()),
+                str(exp),
                 str(local.putjoysuck_cmd),
             )
             download_out_queue.put((local.sn, [], msg))
@@ -692,8 +694,6 @@ while threading.active_count() != 1:  # Wait for all the download threads.
 
 # And then we run this again, in case anything got lost.
 collect_download_results()
-
-urllib.request.urlcleanup()
 
 wrn("")
 
