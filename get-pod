@@ -385,7 +385,6 @@ def download_thread_function(local):
             msg = "Error getting %s:\n%s\n%s\n%s\nWould have run: %s" % (
                 local.sn,
                 str(local.urls),
-                str(resp.headers.as_string().strip()),
                 str(exp),
                 str(local.putjoysuck_cmd),
             )
