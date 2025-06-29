@@ -382,12 +382,8 @@ def download_thread_function(local):
                 ) as resp, open(local.fn, "wb") as f:
                 shutil.copyfileobj(resp, f)
         except Exception as exp:
-            msg = "Error getting %s:\n%s\n%s\n%s\nWould have run: %s" % (
-                local.sn,
-                str(local.urls),
-                str(exp),
-                str(local.putjoysuck_cmd),
-            )
+            msg = f"Error getting {local.sn}:\n{str(local.urls)}\n" + \
+                    f"{str(exp)}\nWould have run: {str(local.putjoysuck_cmd)}"
             download_out_queue.put((local.sn, [], msg))
             continue
         finally:
@@ -564,7 +560,8 @@ def shuttle_fetch_out_to_download_in():
                             "updated", "created", "expired", "id", "author",
                             "contributors", "publisher", "comments", "licence"):
                         if t in entry:
-                            wrn("%s: %s" % (t, entry[t]))
+                            wrn("%s: %s" % (t, '\n'.join(filter(None,
+                                str(entry[t]).splitlines()))))
                     wrn(enc.href)
                     act = input("Do you want to {s}kip, {m}ark (and not "
                         "download), or {d}ownload (and mark)? [skip] ")
