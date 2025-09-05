@@ -378,7 +378,8 @@ def download_thread_function(local):
             max_connections_semaphore.acquire()
             with urllib.request.urlopen(urllib.request.Request(
                     local.urls[0],
-                    headers={'User-Agent': 'Mozilla/5.0'})
+                    headers={'User-Agent': 'Mozilla/5.0'}),
+                    timeout=300
                 ) as resp, open(local.fn, "wb") as f:
                 shutil.copyfileobj(resp, f)
         except Exception as exp:
